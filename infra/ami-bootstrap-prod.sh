@@ -85,6 +85,13 @@ chmod 600 "$ENV_FILE"
 # ── Scratch space for transcodes (root EBS; see launch template volume size) ─
 mkdir -p /mnt/work && chmod 777 /mnt/work
 
+# Shaka Packager writes its manifest atomic-write temp file to $TMPDIR (default
+# /tmp, a tmpfs on AL2023) then rename()s it onto the output under /mnt/work (EBS).
+# A cross-filesystem rename fails with EXDEV ("generic:18"). Point TMPDIR at the
+# EBS work dir so temp + output share one filesystem. (shaka's MPD writer ignores
+# --temp_dir; TMPDIR is the knob it honors, verified on-box.)
+export TMPDIR=/mnt/work
+
 # ── Run the worker (as root) ─────────────────────────────────────────────────
 # config/index.ts calls dotenv.config(), which loads ./.env from the CWD, so we
 # run from APP_DIR and let dotenv read the file we just wrote. No env injection.
