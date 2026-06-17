@@ -60,15 +60,28 @@ sudo mkdir -p /opt/models && sudo cp models/ggml-small.bin /opt/models/
 `ready`. The symlink just makes it work when present.)
 
 ## 6. The worker build -> /opt/euron-vod
-Build on the box (or build elsewhere on arm64 and rsync `dist` + `node_modules`). The worker is
-pure JS (no native addons), so an x86-built `node_modules` also works, but building on arm64 is safest:
+Clone into your HOME dir, NOT `/opt`: `/opt` is root-owned, so `git clone /opt/src` as ec2-user fails
+with "Permission denied" (and `sudo git clone` is wrong too, it would make `/opt/src` root-owned and
+the non-sudo `pnpm install` would then fail). Private repo, so authenticate with a GitHub token (or
+SSH deploy key). `prisma generate` must run BEFORE `pnpm build` (tsc compiles the generated
+`src/db/types.ts`), and it wants `DATABASE_URL` to exist (no DB connection is made; a dummy is fine).
+Use `sudo` only for the final copy into `/opt`:
 ```
-sudo git clone <YOUR_REPO_URL> /opt/src && cd /opt/src
-pnpm install && pnpm build && npx prisma generate
+cd ~
+git clone https://<GITHUB_PAT>@github.com/euron-sde-team/euron-systems-video-transcoding-pipeline.git
+cd euron-systems-video-transcoding-pipeline
+pnpm install
+DATABASE_URL="postgresql://x:x@localhost:5432/x" npx prisma generate   # creates src/db/types.ts, no DB connection
+pnpm build                                                             # tsc -> dist/
 sudo mkdir -p /opt/euron-vod
 sudo rsync -a dist package.json node_modules /opt/euron-vod/
 node /opt/euron-vod/dist/worker/index.js --help 2>/dev/null || true   # link check (will exit fast w/o DB)
 ```
+The worker is pure JS (no native addons), so building on the arm64 builder is safest but not
+mandatory. Alternative (no git creds on the builder): build on your Mac, then
+`rsync -a dist package.json node_modules ec2-user@<builder-ip>:~/euron-vod/` and on the builder
+`sudo rsync -a ~/euron-vod/ /opt/euron-vod/`.
+
 The bootstrap is NOT baked: it is supplied as per-env UserData (see DEPLOYMENT.md step 9).
 
 ## 7. Smoke test (before imaging)

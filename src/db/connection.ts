@@ -22,12 +22,22 @@ const getPoolConfig = (): PoolConfig => {
   const workerLabel = cluster.isWorker && cluster.worker ? `w${cluster.worker.id}` : "primary";
   const isProd = config.isProduction;
 
+  // Prefer DATABASE_URL when set: matches the orchestrator and removes the footgun
+  // where only DATABASE_URL is provided (e.g. just that one in SSM) while the PG_*
+  // vars are empty, which would silently fall back to host="localhost". Otherwise
+  // use the individual PG_* fields.
+  const conn: PoolConfig = config.DATABASE_URL
+    ? { connectionString: config.DATABASE_URL }
+    : {
+        host: config.PG_DATABASE_HOST,
+        user: config.PG_DATABASE_USER,
+        password: config.PG_DATABASE_PASSWORD,
+        port: Number(config.PG_DATABASE_PORT),
+        database: config.PG_DATABASE,
+      };
+
   return {
-    host: config.PG_DATABASE_HOST,
-    user: config.PG_DATABASE_USER,
-    password: config.PG_DATABASE_PASSWORD,
-    port: Number(config.PG_DATABASE_PORT),
-    database: config.PG_DATABASE,
+    ...conn,
     application_name: `euron-vod-${workerLabel}-${process.pid}`,
     keepAlive: true,
     max: config.PG_POOL_MAX ? Number(config.PG_POOL_MAX) : isProd ? 8 : 10,
