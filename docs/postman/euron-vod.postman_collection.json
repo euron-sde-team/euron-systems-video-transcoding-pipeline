@@ -2,12 +2,12 @@
   "info": {
     "name": "Euron VOD Pipeline",
     "_postman_id": "euron-vod-collection",
-    "description": "Upload + manage + play videos against the API service. Works the same whether workers run locally, on a single dev EC2, or as a Lambda + Spot fleet (the API surface is identical). Set the collection variables (baseUrl, serviceKey, tenantId), then run requests 1 -> 2 -> 3 -> 4, then 8 -> 9. Requests 1 and 8 auto-populate variables for the later requests via test scripts.",
+    "description": "Upload + manage + play videos against the API service. Works the same whether workers run locally, on a single dev EC2, or as a Lambda + Spot fleet (the API surface is identical). Set the collection variables (baseUrl, serviceKey, tenantId), then run requests 1 -> 2 -> 3 -> 4, then 8 -> 9. Requests 1 and 8 auto-populate variables for the later requests via test scripts.\n\nIMPORTANT NOTES:\n- baseUrl is http://localhost:4020/api/v1: these Postman calls hit the API directly on your machine. ngrok is only for the worker's PUBLIC_API_BASE and external playback, not for driving the API here.\n- serviceKey is SERVICE_API_KEY (management auth). Do NOT use PLAYBACK_TOKEN_SECRET here; they look almost identical (first character differs) and swapping them yields 'Invalid service credentials' (401).\n- The Authorization header MUST be 'Bearer <serviceKey>'. A raw value without the 'Bearer ' prefix is treated as no credential (401).\n- X-Tenant-Id MUST be a valid UUID (the videos.tenant_id column is uuid). A non-UUID string returns 500 'invalid input syntax for type uuid'. Replace the placeholder with your real tenant UUID.\n- API requests carry 'ngrok-skip-browser-warning: true', which is a no-op on localhost; it only matters if you repoint baseUrl at an ngrok tunnel.\n- Request 2 posts directly to S3 (not ngrok). With static AWS keys (current dev .env) there is no X-Amz-Security-Token, so that form field is disabled by default; enable it only if the API ever uses temporary role credentials.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     { "key": "baseUrl", "value": "http://localhost:4020/api/v1", "type": "string" },
-    { "key": "serviceKey", "value": "local-dev-service-key", "type": "string" },
+    { "key": "serviceKey", "value": "mDdRo09BkHOk6IKTZTuZ5cOR", "type": "string" },
     { "key": "tenantId", "value": "11111111-1111-1111-1111-111111111111", "type": "string" },
     { "key": "userId", "value": "demo-user", "type": "string" },
     { "key": "videoId", "value": "", "type": "string" },
@@ -27,7 +27,9 @@
       "name": "0. Health",
       "request": {
         "method": "GET",
-        "header": [],
+        "header": [
+          { "key": "ngrok-skip-browser-warning", "value": "true" }
+        ],
         "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
       }
     },
@@ -62,14 +64,16 @@
         "header": [
           { "key": "Authorization", "value": "Bearer {{serviceKey}}" },
           { "key": "X-Tenant-Id", "value": "{{tenantId}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "ngrok-skip-browser-warning", "value": "true" }
         ],
         "body": { "mode": "raw", "raw": "{\n  \"filename\": \"sample.mp4\"\n}" },
-        "url": { "raw": "{{baseUrl}}/videos/uploads", "host": ["{{baseUrl}}"], "path": ["videos", "uploads"] }
+        "url": { "raw": "{{baseUrl}}/videos/uploads", "host": ["{{baseUrl}}"], "path": ["videos", "uploads"] },
+        "description": "Auth: 'Bearer {{serviceKey}}' (SERVICE_API_KEY, not the playback secret). X-Tenant-Id must be a valid UUID. filename extension must be an allowed video type. Returns { videoId, upload: { url, fields } }; the test script stashes them for requests 2-4."
       }
     },
     {
-      "name": "2. Upload file to storage (S3/MinIO, presigned)",
+      "name": "2. Upload file to storage (S3, presigned)",
       "request": {
         "method": "POST",
         "header": [],
@@ -81,7 +85,7 @@
             { "key": "X-Amz-Algorithm", "value": "{{up_algo}}", "type": "text" },
             { "key": "X-Amz-Credential", "value": "{{up_cred}}", "type": "text" },
             { "key": "X-Amz-Date", "value": "{{up_date}}", "type": "text" },
-            { "key": "X-Amz-Security-Token", "value": "{{up_token}}", "type": "text", "description": "only present when the API uses temporary (role) credentials; leave blank otherwise" },
+            { "key": "X-Amz-Security-Token", "value": "{{up_token}}", "type": "text", "disabled": true, "description": "DISABLED by default: the dev API uses static AWS keys, so the presigned POST has no security token, and sending an empty one breaks the S3 policy. Enable ONLY if the API switches to temporary role credentials (then up_token will be populated)." },
             { "key": "Policy", "value": "{{up_policy}}", "type": "text" },
             { "key": "X-Amz-Signature", "value": "{{up_sig}}", "type": "text" },
             { "key": "Content-Type", "value": "video/mp4", "type": "text" },
@@ -89,7 +93,7 @@
           ]
         },
         "url": { "raw": "{{uploadUrl}}", "host": ["{{uploadUrl}}"] },
-        "description": "POSTs the file directly to S3/MinIO using the presigned fields from request 1. Our API does not see the bytes. If you used temporary creds and there is no X-Amz-Security-Token, delete that row. Select the file in the 'file' field."
+        "description": "POSTs the file DIRECTLY to S3 using the presigned fields from request 1 (this does NOT go through the API or ngrok, so no auth header and no ngrok-skip header). The API never sees the bytes. Select the file in the 'file' field (keep it last). If the API ever uses temporary role creds, enable the X-Amz-Security-Token row."
       }
     },
     {
@@ -98,7 +102,8 @@
         "method": "POST",
         "header": [
           { "key": "Authorization", "value": "Bearer {{serviceKey}}" },
-          { "key": "X-Tenant-Id", "value": "{{tenantId}}" }
+          { "key": "X-Tenant-Id", "value": "{{tenantId}}" },
+          { "key": "ngrok-skip-browser-warning", "value": "true" }
         ],
         "url": { "raw": "{{baseUrl}}/videos/{{videoId}}/complete", "host": ["{{baseUrl}}"], "path": ["videos", "{{videoId}}", "complete"] }
       }
@@ -109,7 +114,8 @@
         "method": "GET",
         "header": [
           { "key": "Authorization", "value": "Bearer {{serviceKey}}" },
-          { "key": "X-Tenant-Id", "value": "{{tenantId}}" }
+          { "key": "X-Tenant-Id", "value": "{{tenantId}}" },
+          { "key": "ngrok-skip-browser-warning", "value": "true" }
         ],
         "url": { "raw": "{{baseUrl}}/videos/{{videoId}}", "host": ["{{baseUrl}}"], "path": ["videos", "{{videoId}}"] }
       }
@@ -120,7 +126,8 @@
         "method": "GET",
         "header": [
           { "key": "Authorization", "value": "Bearer {{serviceKey}}" },
-          { "key": "X-Tenant-Id", "value": "{{tenantId}}" }
+          { "key": "X-Tenant-Id", "value": "{{tenantId}}" },
+          { "key": "ngrok-skip-browser-warning", "value": "true" }
         ],
         "url": {
           "raw": "{{baseUrl}}/videos?status=&page=1&limit=20",
@@ -140,7 +147,8 @@
         "method": "POST",
         "header": [
           { "key": "Authorization", "value": "Bearer {{serviceKey}}" },
-          { "key": "X-Tenant-Id", "value": "{{tenantId}}" }
+          { "key": "X-Tenant-Id", "value": "{{tenantId}}" },
+          { "key": "ngrok-skip-browser-warning", "value": "true" }
         ],
         "url": { "raw": "{{baseUrl}}/videos/{{videoId}}/retry", "host": ["{{baseUrl}}"], "path": ["videos", "{{videoId}}", "retry"] }
       }
@@ -151,7 +159,8 @@
         "method": "POST",
         "header": [
           { "key": "Authorization", "value": "Bearer {{serviceKey}}" },
-          { "key": "X-Tenant-Id", "value": "{{tenantId}}" }
+          { "key": "X-Tenant-Id", "value": "{{tenantId}}" },
+          { "key": "ngrok-skip-browser-warning", "value": "true" }
         ],
         "url": { "raw": "{{baseUrl}}/videos/{{videoId}}/cancel", "host": ["{{baseUrl}}"], "path": ["videos", "{{videoId}}", "cancel"] }
       }
@@ -176,7 +185,8 @@
         "header": [
           { "key": "Authorization", "value": "Bearer {{serviceKey}}" },
           { "key": "X-Tenant-Id", "value": "{{tenantId}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "ngrok-skip-browser-warning", "value": "true" }
         ],
         "body": { "mode": "raw", "raw": "{\n  \"userId\": \"{{userId}}\"\n}" },
         "url": { "raw": "{{baseUrl}}/videos/{{videoId}}/playback-token", "host": ["{{baseUrl}}"], "path": ["videos", "{{videoId}}", "playback-token"] }
@@ -186,7 +196,9 @@
       "name": "9. Get content key (Shaka clearKeys JSON)",
       "request": {
         "method": "GET",
-        "header": [],
+        "header": [
+          { "key": "ngrok-skip-browser-warning", "value": "true" }
+        ],
         "url": {
           "raw": "{{baseUrl}}/videos/{{videoId}}/key?token={{playbackToken}}",
           "host": ["{{baseUrl}}"],

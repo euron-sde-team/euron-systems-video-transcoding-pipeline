@@ -26,15 +26,33 @@ export const transcode = async (
   inputPath: string,
   workDir: string,
   rungs: Rung[],
-  hasAudio: boolean
+  hasAudio: boolean,
+  rotation = 0
 ): Promise<TranscodeResult> => {
-  // Build: [0:v]split=N[s0][s1]...; [s0]scale..[v0]; [s1]scale..[v1]; ...
+  // Clockwise display rotation, applied BEFORE the split so every rung inherits
+  // it from the single decode. ffmpeg does NOT autorotate complex-filtergraph
+  // inputs (only simple -vf / direct outputs), so we rotate explicitly; the
+  // matching -noautorotate below forces [0:v] to coded frames on every ffmpeg
+  // build, so this transpose is the sole rotation (never a double-rotate).
+  // rotation=0 leaves the command byte-for-byte identical to the legacy path.
+  const rotFilter =
+    rotation === 90
+      ? "transpose=1" // 90deg clockwise
+      : rotation === 270
+        ? "transpose=2" // 90deg counter-clockwise
+        : rotation === 180
+          ? "transpose=1,transpose=1"
+          : null;
+
+  // Build: [0:v]{rot,}split=N[s0][s1]...; [s0]scale..[v0]; [s1]scale..[v1]; ...
   const splitLabels = rungs.map((_, i) => `[s${i}]`).join("");
-  const splitChain = `[0:v]split=${rungs.length}${splitLabels}`;
+  const splitChain = `[0:v]${rotFilter ? `${rotFilter},` : ""}split=${rungs.length}${splitLabels}`;
   const scaleChains = rungs.map((r, i) => `[s${i}]${r.scaleFilter}[v${i}]`);
   const filterComplex = [splitChain, ...scaleChains].join(";");
 
-  const args: string[] = ["-y", "-i", inputPath, "-filter_complex", filterComplex];
+  const args: string[] = ["-y"];
+  if (rotFilter) args.push("-noautorotate"); // input option: must precede -i
+  args.push("-i", inputPath, "-filter_complex", filterComplex);
 
   const videoFiles: { rung: Rung; file: string }[] = [];
   rungs.forEach((rung, i) => {

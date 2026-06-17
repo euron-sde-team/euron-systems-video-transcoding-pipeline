@@ -56,8 +56,8 @@ export const transcodePipeline = async (
     await setOrientation(video.id, workerId, probed.orientation);
     const ladder = selectLadder(probed.orientation, probed.width, probed.height);
     logger.info(
-      `[pipeline ${video.id}] ${probed.width}x${probed.height} ${probed.orientation}, ` +
-        `${ladder.length} rungs, ${probed.durationSec}s, audio=${probed.hasAudio}`
+      `[pipeline ${video.id}] ${probed.width}x${probed.height} ${probed.orientation} ` +
+        `rot=${probed.rotation}, ${ladder.length} rungs, ${probed.durationSec}s, audio=${probed.hasAudio}`
     );
 
     // ── 2. transcoding (single decode, many encodes) + thumbnails ──
@@ -66,7 +66,8 @@ export const transcodePipeline = async (
       inputPath,
       renditionsDir,
       ladder,
-      probed.hasAudio
+      probed.hasAudio,
+      probed.rotation
     );
     await hb.update("transcoding", 55);
 

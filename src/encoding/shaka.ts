@@ -70,7 +70,12 @@ export const packageCmaf = async (input: PackageInput): Promise<PackageResult> =
     "--enable_raw_key_encryption",
     "--keys", `label=${DRM_LABEL}:key_id=${input.key.kidHex}:key=${input.key.keyHex}`,
     "--hls_master_playlist_output", "master.m3u8",
-    "--mpd_output", "manifest.mpd"
+    "--mpd_output", "manifest.mpd",
+    // Keep shaka's temp files on the SAME filesystem as the output. Without this,
+    // shaka writes temp files under the OS temp dir (/tmp, a tmpfs on AL2023) and
+    // then atomically rename()s them onto manifest.mpd in WORK_DIR (/mnt, EBS). A
+    // cross-filesystem rename fails with EXDEV ("generic:18"), aborting packaging.
+    "--temp_dir", input.outputDir
   );
 
   if (input.hlsKeyUri) {
