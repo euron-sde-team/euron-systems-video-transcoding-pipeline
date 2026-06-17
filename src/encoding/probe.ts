@@ -4,7 +4,7 @@ import { run } from "./exec";
 export type Orientation = "landscape" | "portrait" | "square";
 
 export interface ProbeResult {
-  /** DISPLAY width (after rotation) — drives orientation + the ABR ladder. */
+  /** DISPLAY width (after rotation), drives orientation + the ABR ladder. */
   width: number;
   /** DISPLAY height (after rotation). */
   height: number;

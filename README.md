@@ -82,3 +82,10 @@ pnpm build:lambda                            # orchestrator bundle (dist-lambda/
 
 See `IMPLEMENTATION_GUIDE.md` for the authoritative spec and `tasks/todo.md` for build status.
 Acceptance criteria are in `IMPLEMENTATION_GUIDE.md §19`.
+
+## Docs
+- `infra/DEPLOYMENT.md`: full dev/prod deploy runbook (AWS Console + CLI for every step).
+- `infra/ami-build.md`: build the arm64 worker AMI. `infra/DEPLOY-LAMBDA-DEV.md`: orchestrator Lambda setup.
+- `docs/LOCAL.md`: run the whole pipeline locally (Postgres + MinIO via `docker compose`, no cloud).
+- `docs/TROUBLESHOOTING.md`: every real failure hit during production bring-up (Spot service-linked role, launch-template UserData, the shaka `TMPDIR`/EXDEV packaging fix, R2 CORS, the ngrok key-URI interstitial, `$Latest` vs `$Default`, scaling/reaper behavior) with verified root causes and fixes.
+- `docs/postman/`: Postman collection + README for the HTTP API.

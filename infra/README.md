@@ -1,10 +1,12 @@
 # Infrastructure
 
-Deploy order: **S3/R2/KMS → SSM params → IAM roles → AMI → Launch Template → Lambda + EventBridge cron**.
+Deploy order: **Spot SLR (once/account) → S3/R2/KMS → SSM params → IAM roles → AMI → Launch Template → Lambda + EventBridge cron**.
+
+> See `../docs/TROUBLESHOOTING.md` for verified fixes to every failure hit during bring-up.
 
 ## 1. Buckets & keys
-- **S3** `euron-uploads` (raw uploads), same region as workers (`ap-south-1`). CORS for browser PUT.
-- **R2** `euron-vod` (processed output) + a Cloudflare CDN binding (`R2_PUBLIC_BASE`, e.g. `https://cdn.euron.one`). CORS `GET, HEAD` for playback.
+- **S3** `euron-vod-uploads` (raw uploads), same region as workers (`ap-south-1`). CORS for browser PUT.
+- **R2** `euron-vod` (processed output) + a Cloudflare CDN binding (`R2_PUBLIC_BASE`, e.g. `https://cdn.euron.one`). CORS `GET, HEAD` with `AllowedHeaders: *` (segments use a `Range` header that preflights) for browser playback; without it, players fail with Shaka `Error 1002`.
 - **KMS** customer key for wrapping per-video content keys (`KEY_KMS_KEY_ID`). Worker needs `Encrypt`/`Decrypt`.
 
 ## 2. SSM Parameter Store (runtime secrets the bootstrap pulls)
@@ -16,7 +18,8 @@ The bootstrap normalizes the prefix, so the slash form does not matter, but the 
 themselves must be hierarchical (leading slash), which SSM requires.
 
 ## 3. IAM
-- Worker role `euron-vod-worker-role` (+ instance profile `euron-vod-worker-profile`) ← `iam/worker-policy.json`. **No EC2 perms** (workers self-terminate via the OS).
+- **EC2 Spot service-linked role** `AWSServiceRoleForEC2Spot`: create ONCE per account (`aws iam create-service-linked-role --aws-service-name spot.amazonaws.com`). The Lambda role can't auto-create it; the first Spot launch fails (`AuthFailure.ServiceLinkedRoleCreationNotPermitted`) without it.
+- Worker role `euron-vod-worker-role` (+ instance profile of the **same name**, e.g. `euron-vod-worker-dev-role`) ← `iam/worker-policy.json`. **No EC2 perms** (workers self-terminate via the OS).
 - Lambda role `euron-vod-orchestrator-role` ← `iam/lambda-policy.json` (`RunInstances`, `DescribeInstances`, `PassRole` worker role, VPC ENIs for RDS).
 
 ## 4. AMI (ARM64 / aarch64, Graviton). See `ami-build.md`.
@@ -26,11 +29,13 @@ aarch64 FFmpeg + libx264, the `packager-linux-arm64` binary, whisper.cpp built +
 at `/opt/euron-vod` (`dist/` + `node_modules`). Constraint #10: bake heavy deps, do not install on boot.
 
 ## 5. Launch Template
-`aws ec2 create-launch-template --launch-template-name transcoder --launch-template-data file://launch-template.json`
+`aws ec2 create-launch-template --launch-template-name euron-vod-<env>-worker-template --launch-template-data file://launch-template.json`
 (fill placeholders; arm64 AMI, `c7g.xlarge`, 100 GB gp3, Spot, `InstanceInitiatedShutdownBehavior=terminate`,
 tag `role=transcoder`). `UserData` = base64 of the per-env bootstrap, e.g.
 `base64 -w0 infra/ami-bootstrap-dev.sh` (dev) or `infra/ami-bootstrap-prod.sh` (prod). The SSM prefix
-is hardcoded in each file; the bootstrap IS the user-data, not baked into the AMI.
+is hardcoded in each file; the bootstrap IS the user-data, not baked into the AMI. After updating
+(new AMI or edited bootstrap) run `create-launch-template-version` then `modify-launch-template
+--default-version <n>`: the Lambda uses `$Latest`, but the console shows `$Default` and they differ.
 
 > Reliability option: an **EC2 Fleet** with `capacity-optimized` across `c7g.xlarge`,
 > `c7g.2xlarge`, `c8g.xlarge`, `c6g.xlarge` reduces Spot interruptions. Add only if

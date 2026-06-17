@@ -8,6 +8,11 @@ this whole runbook once for `dev` now; re-run it with the prod column later. No 
 Every step shows the **AWS Console** path and the equivalent **CLI**. The CLI uses shell variables so
 you set them once per environment and paste the rest unchanged.
 
+> When something breaks, see **`docs/TROUBLESHOOTING.md`**, it lists every real failure hit bringing
+> this up (Spot service-linked role, missing launch-template UserData, the shaka `TMPDIR`/EXDEV
+> packaging fix, R2 CORS, the ngrok key-URI interstitial, `$Latest` vs `$Default`, scaling/reaper
+> behavior) with verified root causes and fixes.
+
 ---
 
 ## 0. Naming convention (every resource carries the env)
@@ -17,13 +22,13 @@ without the dev Lambda counting prod workers or vice versa.
 
 | Resource | Dev | Prod |
 |----------|-----|------|
-| S3 upload bucket | `euron-uploads-dev` | `euron-uploads` |
+| S3 upload bucket | `euron-vod-uploads-dev` | `euron-vod-uploads` |
 | R2 output bucket | `euron-vod-dev` | `euron-vod` |
 | SSM prefix | `/euron-vod-dev` | `/euron-vod` |
 | KMS alias (content keys) | `alias/euron-vod-dev` | `alias/euron-vod` |
 | Worker IAM role + profile | `euron-vod-worker-dev-role` | `euron-vod-worker-role` |
 | Lambda IAM role | `euron-vod-orchestrator-dev-role` | `euron-vod-orchestrator-role` |
-| Launch template | `transcoder-dev` | `transcoder` |
+| Launch template | `euron-vod-dev-worker-template` | `euron-vod-worker-template` |
 | Lambda function | `euron-vod-orchestrator-dev` | `euron-vod-orchestrator` |
 | EventBridge rule | `euron-vod-orchestrator-dev` | `euron-vod-orchestrator` |
 | Worker instance tag `role` | `transcoder-dev` | `transcoder` |
@@ -49,12 +54,12 @@ export VPC_ID=<DEV_VPC_ID>
 export WORKER_SUBNET=<DEV_SUBNET_ID>           # subnet with internet egress (NAT or public)
 export LAMBDA_SUBNETS=<DEV_PRIVATE_SUBNET_IDS_CSV>
 
-export UPLOAD_BUCKET=euron-uploads-$ENV
+export UPLOAD_BUCKET=euron-vod-uploads-$ENV
 export SSM_PREFIX=/euron-vod-$ENV
 export KMS_ALIAS=alias/euron-vod-$ENV
 export WORKER_ROLE=euron-vod-worker-$ENV-role
 export LAMBDA_ROLE=euron-vod-orchestrator-$ENV-role
-export LT_NAME=transcoder-$ENV
+export LT_NAME=euron-vod-$ENV-worker-template
 export FN_NAME=euron-vod-orchestrator-$ENV
 export ROLE_TAG=transcoder-$ENV
 
@@ -98,11 +103,21 @@ Apply the schema to this env's DB once:
 psql "$DATABASE_URL" -f docs/migrations/0001_init.sql
 ```
 
+**EC2 Spot service-linked role (one-time per AWS account, before the first Spot launch):** the
+orchestrator launches Spot instances, and the first-ever Spot launch in the account needs the
+`AWSServiceRoleForEC2Spot` service-linked role. The Lambda role can't auto-create it, so create it
+once (account-wide, not attached to anything, serves both dev and prod):
+```
+aws iam create-service-linked-role --aws-service-name spot.amazonaws.com
+```
+Console: IAM -> Roles -> Create role -> AWS service -> EC2 -> "EC2 - Spot Instances". Skipping this
+makes the Lambda fail with `AuthFailure.ServiceLinkedRoleCreationNotPermitted`.
+
 ---
 
 ## 3. S3 upload bucket
 
-**Console:** S3 -> Create bucket -> name `euron-uploads-dev`, region, Block all public access ON ->
+**Console:** S3 -> Create bucket -> name `euron-vod-uploads-dev`, region, Block all public access ON ->
 Create. Permissions -> CORS -> Edit -> paste the JSON below.
 **CLI:**
 ```
@@ -114,10 +129,19 @@ aws s3api put-bucket-cors --bucket $UPLOAD_BUCKET --cors-configuration \
 
 ## 4. Cloudflare R2 output bucket (per env)
 
-Cloudflare dashboard -> R2 -> Create bucket `euron-vod-dev` -> add CORS (`GET, HEAD`, origins `*`) ->
-bind a CDN hostname (custom domain or r2.dev) for `R2_PUBLIC_BASE`. R2 -> Manage API Tokens -> create
-an Object Read and Write token; note Access Key ID, Secret, and Account ID. (R2 is not in AWS; the
-worker reaches it with these S3-compatible creds, pulled from SSM in step 6.)
+Cloudflare dashboard -> R2 -> Create bucket `euron-vod-dev` -> bind a CDN hostname (custom domain or
+r2.dev) for `R2_PUBLIC_BASE` -> R2 -> Manage API Tokens -> create an **Object Read and Write** token;
+note Access Key ID, Secret, and Account ID. (R2 is not in AWS; the worker reaches it with these
+S3-compatible creds, pulled from SSM in step 6.)
+
+Set the bucket **CORS policy** (Settings -> CORS, or the S3 `PutBucketCors` API). `AllowedHeaders: *`
+is required because the browser fetches segments with a `Range` header (which preflights); without
+CORS, playback fails with Shaka `Error 1002` on `master.m3u8`:
+```
+[{ "AllowedOrigins": ["*"], "AllowedMethods": ["GET","HEAD"], "AllowedHeaders": ["*"],
+   "ExposeHeaders": ["Content-Length","Content-Range","ETag","Accept-Ranges"], "MaxAgeSeconds": 3600 }]
+```
+Tighten `AllowedOrigins` to your real app domains in prod (wildcard is fine for dev).
 
 ## 5. KMS key for content-key wrapping (per env)
 
@@ -148,6 +172,10 @@ put KEY_KMS_KEY_ID "$KMS_KEY_ID"
 put PLAYBACK_TOKEN_SECRET "<SAME_HS256_SECRET_AS_THE_API>"
 put PUBLIC_API_BASE "https://video-$ENV.euron.one"
 ```
+> Shortcut: `scripts/push-ssm.sh <env> [env-file]` pushes all of these from a local `.env`. Runtime
+> prefers `DATABASE_URL` (the `PG_*` are a fallback that defaults to `localhost` if BOTH are empty),
+> so `DATABASE_URL` alone covers the DB; push the `PG_*` too for safety. `AWS_S3_*` are intentionally
+> NOT pushed, the worker uses its instance role for S3 + KMS.
 
 ## 7. IAM roles (per env)
 
@@ -197,7 +225,7 @@ serves both dev and prod.
 The whole bootstrap is the UserData (not baked). There is one static file per env with the SSM prefix
 hardcoded, so there is nothing to template: use `infra/ami-bootstrap-dev.sh` for dev and
 `infra/ami-bootstrap-prod.sh` for prod (i.e. `infra/ami-bootstrap-$ENV.sh`).
-**Console:** EC2 -> Launch Templates -> Create launch template `transcoder-dev` -> AMI `<AMI_ID>`
+**Console:** EC2 -> Launch Templates -> Create launch template `euron-vod-dev-worker-template` -> AMI `<AMI_ID>`
 (arm64), type `c7g.xlarge`, instance profile `euron-vod-worker-dev-role`, security group the worker
 SG, storage 100 GB gp3, Advanced: request Spot + Shutdown behavior `Terminate`, tag
 `role=transcoder-dev`, paste the contents of `infra/ami-bootstrap-dev.sh` as User data.
@@ -210,6 +238,13 @@ aws ec2 create-launch-template --region $REGION --launch-template-name $LT_NAME 
 ```
 Do not also hardcode a subnet/network-interface here; the Lambda passes the subnet at launch. The
 c7g.xlarge in the template and the Lambda's `WORKER_INSTANCE_TYPE` must match (both arm64).
+
+> Updating later (new AMI or edited bootstrap): create a new launch-template version, then make it the
+> default. The orchestrator uses `LAUNCH_TEMPLATE_VERSION=$Latest` (highest number) so it picks up new
+> versions automatically, but `$Latest` is NOT `$Default`, the console shows the default, so set it too
+> to avoid confusion: `aws ec2 modify-launch-template --launch-template-name $LT_NAME --default-version <n>`.
+> A worker **code** change needs a new AMI (re-bake); a **bootstrap/UserData** change is just a new
+> version with updated `UserData` (no re-bake). See `docs/TROUBLESHOOTING.md` for the fast re-bake flow.
 
 ## 10. Orchestrator Lambda (per env)
 

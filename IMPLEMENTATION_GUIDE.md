@@ -4,6 +4,10 @@
 > delivery pipeline. Read the whole document before writing code. The **Critical Constraints**
 > section is non-negotiable — several items there are subtle and wrong-by-default if you follow
 > common tutorials. Build in the **phases** defined at the end; do not attempt everything at once.
+>
+> **Operating it:** `infra/DEPLOYMENT.md` is the deploy runbook; `docs/TROUBLESHOOTING.md` records every
+> real production-bring-up failure (Spot service-linked role, launch-template UserData, the shaka
+> `TMPDIR`/EXDEV packaging fix, R2 CORS, the ngrok key-URI interstitial, scaling/reaper) with fixes.
 
 ---
 
