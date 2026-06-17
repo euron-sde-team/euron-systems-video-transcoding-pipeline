@@ -1,0 +1,88 @@
+import { createReadStream } from "fs";
+import { readdir, stat } from "fs/promises";
+import path from "path";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import config from "../config";
+import logger from "../utils/logger";
+
+// R2 is S3-compatible: region "auto", custom endpoint, R2 creds. Path-style
+// addressing works for both R2 and a local MinIO endpoint.
+const r2 = new S3Client({
+  region: "auto",
+  endpoint: config.R2_ENDPOINT || undefined,
+  forcePathStyle: true,
+  credentials:
+    config.R2_ACCESS_KEY_ID && config.R2_SECRET_ACCESS_KEY
+      ? { accessKeyId: config.R2_ACCESS_KEY_ID, secretAccessKey: config.R2_SECRET_ACCESS_KEY }
+      : undefined,
+});
+
+const contentTypeFor = (file: string): string => {
+  if (file.endsWith(".m3u8")) return "application/vnd.apple.mpegurl";
+  if (file.endsWith(".mpd")) return "application/dash+xml";
+  if (file.endsWith(".m4s")) return "video/iso.segment";
+  if (file.endsWith(".mp4")) return "video/mp4";
+  if (file.endsWith(".vtt")) return "text/vtt";
+  if (file.endsWith(".jpg") || file.endsWith(".jpeg")) return "image/jpeg";
+  return "application/octet-stream";
+};
+
+// Manifests get a short TTL (so a re-publish propagates); everything else is
+// content-addressed-immutable for the life of the video.
+const cacheControlFor = (file: string): string =>
+  file.endsWith(".m3u8") || file.endsWith(".mpd")
+    ? "public, max-age=300"
+    : "public, max-age=31536000, immutable";
+
+async function walk(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...(await walk(full)));
+    else out.push(full);
+  }
+  return out;
+}
+
+/** Bounded-concurrency map (no extra dep). */
+async function mapPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) {
+      const idx = i++;
+      await fn(items[idx] as T);
+    }
+  });
+  await Promise.all(workers);
+}
+
+/**
+ * Upload the entire packaged output tree to R2 under `{outputPrefix}/...`.
+ * EC2→R2 is the billed egress hop (constraint #11), so this is the only place
+ * bytes leave AWS, keep the ladder disciplined upstream, not here.
+ */
+export const uploadOutputTree = async (outputDir: string, outputPrefix: string): Promise<number> => {
+  const files = await walk(outputDir);
+  let bytes = 0;
+
+  await mapPool(files, 8, async (filePath) => {
+    const rel = path.relative(outputDir, filePath).split(path.sep).join("/");
+    const key = `${outputPrefix}/${rel}`;
+    const size = (await stat(filePath)).size;
+    bytes += size;
+    await r2.send(
+      new PutObjectCommand({
+        Bucket: config.R2_BUCKET,
+        Key: key,
+        Body: createReadStream(filePath),
+        ContentLength: size,
+        ContentType: contentTypeFor(filePath),
+        CacheControl: cacheControlFor(filePath),
+      })
+    );
+  });
+
+  logger.info(`[r2] uploaded ${files.length} files (${bytes} bytes) → ${outputPrefix}/`);
+  return files.length;
+};

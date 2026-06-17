@@ -1,0 +1,55 @@
+# Local test stack: Postgres (the queue) + MinIO (S3-compatible, stands in for
+# BOTH the S3 raw-upload bucket and the R2 output bucket). No AWS, no Cloudflare.
+# Bring up:  docker compose up -d
+# Tear down: docker compose down         (add -v to wipe data)
+services:
+  postgres:
+    image: postgres:16
+    container_name: euron-vod-pg
+    environment:
+      POSTGRES_DB: euron_video_pipeline
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    container_name: euron-vod-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      # Allow the browser player (any local origin) to fetch manifests/segments.
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # web console (http://localhost:9001, minioadmin/minioadmin)
+    volumes:
+      - miniodata:/data
+
+  # One-shot: create both buckets and make the output bucket publicly readable
+  # (so the player can stream segments without signed URLs in local dev).
+  createbuckets:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 minioadmin minioadmin; do echo 'waiting for minio'; sleep 2; done;
+      mc mb -p local/euron-uploads-local;
+      mc mb -p local/euron-vod-local;
+      mc anonymous set download local/euron-vod-local;
+      echo 'buckets ready';
+      "
+
+volumes:
+  pgdata:
+  miniodata:

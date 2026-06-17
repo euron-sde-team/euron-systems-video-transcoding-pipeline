@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Euron Systems VOD, Player Demo</title>
+    <!-- Shaka Player UI (provides shaka global + control bar styles). -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/shaka-player@4.11.0/dist/controls.css" />
+    <script src="https://cdn.jsdelivr.net/npm/shaka-player@4.11.0/dist/shaka-player.ui.js"></script>
+    <style>
+      body { margin: 0; font-family: system-ui, sans-serif; background: #0b0b0d; color: #eaeaea; }
+      header { padding: 16px 20px; border-bottom: 1px solid #222; }
+      h1 { font-size: 18px; margin: 0; }
+      .controls { padding: 16px 20px; display: grid; gap: 10px; max-width: 760px; }
+      .controls label { display: grid; gap: 4px; font-size: 13px; color: #bbb; }
+      .controls input, .controls select { padding: 8px; border-radius: 6px; border: 1px solid #333; background: #15151a; color: #eee; }
+      .row { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+      button { padding: 9px 16px; border-radius: 6px; border: 0; background: #ff4d4f; color: #fff; font-weight: 600; cursor: pointer; }
+      .stage { padding: 20px; }
+      /* Landscape: full-width 16:9. */
+      #player[data-orientation="landscape"], #player[data-orientation="square"] { width: 100%; max-width: 960px; aspect-ratio: 16 / 9; }
+      #player[data-orientation="square"] { aspect-ratio: 1 / 1; max-width: 640px; }
+      /* Vertical: constrained 9:16, centered (compact control layout). */
+      #player[data-orientation="portrait"] { width: 360px; max-width: 90vw; aspect-ratio: 9 / 16; margin: 0 auto; }
+      #player { background: #000; border-radius: 10px; overflow: hidden; }
+    </style>
+  </head>
+  <body>
+    <header><h1>Euron Systems VOD, Player Demo</h1></header>
+
+    <div class="controls">
+      <label>Manifest URL (master.m3u8 or manifest.mpd)
+        <input id="manifest" placeholder="https://cdn.euron.one/{tenant}/{video}/master.m3u8" />
+      </label>
+      <label>Key endpoint (optional, for cbcs clear-key)
+        <input id="keyEndpoint" placeholder="https://video.euron.one/api/v1/videos/{video}/key" />
+      </label>
+      <label>Playback token (optional)
+        <input id="token" placeholder="eyJ..." />
+      </label>
+      <label>Thumbnails VTT (optional)
+        <input id="thumbs" placeholder="https://cdn.euron.one/{tenant}/{video}/thumbnails/thumbnails.vtt" />
+      </label>
+      <div class="row">
+        <label>Orientation
+          <select id="orientation">
+            <option value="landscape">Landscape (16:9)</option>
+            <option value="portrait">Vertical (9:16)</option>
+            <option value="square">Square (1:1)</option>
+          </select>
+        </label>
+        <label>Watermark text
+          <input id="watermark" value="viewer@example.com" />
+        </label>
+        <button id="play">Load &amp; Play</button>
+      </div>
+    </div>
+
+    <div class="stage"><div id="player"></div></div>
+
+    <script type="module">
+      import { EuronVideoPlayer } from "../dist/euron-player.js";
+
+      let current = null;
+      const $ = (id) => document.getElementById(id);
+
+      // Prefill from query params (used by scripts/dev-play.sh).
+      const qs = new URLSearchParams(location.search);
+      const setFromQs = (id, key) => { const v = qs.get(key); if (v) $(id).value = v; };
+      setFromQs("manifest", "manifest");
+      setFromQs("keyEndpoint", "keyEndpoint");
+      setFromQs("token", "token");
+      setFromQs("thumbs", "thumbs");
+      if (qs.get("orientation")) $("orientation").value = qs.get("orientation");
+
+      $("play").addEventListener("click", async () => {
+        if (current) await current.destroy();
+        const container = $("player");
+        container.innerHTML = "";
+        current = new EuronVideoPlayer({
+          container,
+          manifestUrl: $("manifest").value.trim(),
+          keyEndpoint: $("keyEndpoint").value.trim() || undefined,
+          playbackToken: $("token").value.trim() || undefined,
+          thumbnailsVttUrl: $("thumbs").value.trim() || undefined,
+          orientation: $("orientation").value,
+          watermark: $("watermark").value.trim()
+            ? { text: $("watermark").value.trim(), intervalMs: 4000 }
+            : undefined,
+        });
+        try {
+          await current.load();
+        } catch (e) {
+          alert("Load failed: " + e.message);
+          console.error(e);
+        }
+      });
+
+      // Auto-play when arriving from dev-play.sh (?autoplay=1).
+      if (qs.get("autoplay") && $("manifest").value) $("play").click();
+    </script>
+  </body>
+</html>

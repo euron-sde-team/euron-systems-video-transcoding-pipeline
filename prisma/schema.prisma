@@ -1,0 +1,119 @@
+// Euron Video Transcoding Pipeline, Prisma schema.
+//
+// IMPORTANT: This file is the SOURCE for Kysely type generation only
+// (`prisma generate` → src/db/types.ts + src/db/enums.ts via prisma-kysely).
+// The authoritative DDL the developer runs lives in docs/migrations/*.sql,
+// because Postgres features used here (partial indexes with WHERE clauses)
+// cannot be expressed in Prisma. Keep the two in sync by hand.
+//
+// Claude Code never runs migrate/db push/db pull. Only `prisma generate`.
+
+generator kysely {
+  provider     = "prisma-kysely"
+  output       = "../src/db"
+  enumFileName = "enums.ts"
+  fileName     = "types.ts"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum video_status {
+  uploading
+  uploaded
+  processing
+  ready
+  failed
+  cancelled
+}
+
+// Only meaningful while status = 'processing'.
+enum video_stage {
+  transcoding
+  transcribing
+  packaging
+  uploading_output
+}
+
+// Additive toward DRM. 'drm_cbcs' is reserved for the future; not built now.
+enum protection_mode {
+  none
+  aes_128
+  drm_cbcs
+}
+
+enum watermark_mode {
+  none
+  dynamic_overlay
+  forensic_ab
+}
+
+enum orientation {
+  landscape
+  portrait
+  square
+}
+
+// How the per-video content key is wrapped at rest.
+enum key_wrap_scheme {
+  kms
+  local_aes
+}
+
+model videos {
+  id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id String       @db.Uuid
+
+  status   video_status @default(uploading)
+  stage    video_stage?
+  progress Int          @default(0) @db.SmallInt
+
+  // storage
+  source_key    String?
+  source_bytes  BigInt?
+  output_prefix String?
+  orientation   orientation?
+
+  // protection / features (additive; defaults reflect "AES now, no DRM")
+  protection    protection_mode @default(aes_128)
+  watermark     watermark_mode  @default(dynamic_overlay)
+  allow_offline Boolean         @default(false)
+  captions_langs String[]       @default([])
+
+  // queue / claim mechanics
+  locked_by    String?
+  locked_at    DateTime? @db.Timestamptz
+  heartbeat_at DateTime? @db.Timestamptz
+  attempts     Int       @default(0)
+  max_attempts Int       @default(3)
+
+  // flexible per-video pipeline knobs (ladder override, key ref, etc.)
+  pipeline_config Json @default("{}")
+
+  error      String?
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @default(now()) @db.Timestamptz
+  ready_at   DateTime? @db.Timestamptz
+
+  video_keys video_keys?
+
+  // NOTE: the partial indexes (WHERE status = '...') live in the raw SQL
+  // migration; Prisma cannot express them. This @@index is the tenant listing one.
+  @@index([tenant_id, created_at])
+}
+
+model video_keys {
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  video_id    String          @unique @db.Uuid
+  tenant_id   String          @db.Uuid
+  kid_hex     String // 32 hex chars (16-byte key id)
+  wrapped_key String // base64 of the wrapped 16-byte content key
+  wrap_scheme key_wrap_scheme @default(kms)
+  created_at  DateTime        @default(now()) @db.Timestamptz
+
+  videos videos @relation(fields: [video_id], references: [id], onDelete: Cascade)
+
+  @@index([tenant_id])
+}

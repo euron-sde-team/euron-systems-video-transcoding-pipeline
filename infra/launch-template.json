@@ -1,0 +1,26 @@
+{
+  "_comment": "ARM64 (Graviton) Spot worker launch template. ImageId MUST be an arm64 AMI (see ami-build.md); InstanceType is c7g.xlarge (Graviton3). Create with: aws ec2 create-launch-template --launch-template-name transcoder-<env> --launch-template-data file://launch-template.json. The Lambda references it by name and overrides subnet/spot/tags at RunInstances. UserData = base64 of the per-env bootstrap (infra/ami-bootstrap-dev.sh for dev, infra/ami-bootstrap-prod.sh for prod; SSM prefix is hardcoded in each). Replace ALL <...> placeholders.",
+  "LaunchTemplateName": "transcoder",
+  "LaunchTemplateData": {
+    "ImageId": "<BAKED_ARM64_AMI_ID>",
+    "InstanceType": "c7g.xlarge",
+    "IamInstanceProfile": { "Name": "euron-vod-worker-profile" },
+    "SecurityGroupIds": ["<WORKER_SECURITY_GROUP_ID>"],
+    "InstanceInitiatedShutdownBehavior": "terminate",
+    "InstanceMarketOptions": {
+      "MarketType": "spot",
+      "SpotOptions": { "SpotInstanceType": "one-time", "InstanceInterruptionBehavior": "terminate" }
+    },
+    "BlockDeviceMappings": [
+      {
+        "DeviceName": "/dev/xvda",
+        "Ebs": { "VolumeSize": 100, "VolumeType": "gp3", "DeleteOnTermination": true }
+      }
+    ],
+    "TagSpecifications": [
+      { "ResourceType": "instance", "Tags": [{ "Key": "role", "Value": "transcoder" }] }
+    ],
+    "MetadataOptions": { "HttpTokens": "required", "HttpEndpoint": "enabled" },
+    "UserData": "<BASE64_OF_infra/ami-bootstrap-dev.sh_OR_-prod.sh>"
+  }
+}

@@ -1,0 +1,186 @@
+import { randomUUID } from "crypto";
+import type { PresignedPost } from "@aws-sdk/s3-presigned-post";
+import config from "../config";
+import { video_status } from "../db/enums";
+import { BadRequestError } from "../errors/bad-request.error";
+import { ConflictError } from "../errors/conflict.error";
+import { NotFoundError } from "../errors/not-found.error";
+import { TooManyRequestError } from "../errors/too-many-request.error";
+import { UnprocessableError } from "../errors/unprocessable.error";
+import videosRepository, { type VideoRow } from "../repositories/videos.repository";
+import { ALLOWED_UPLOAD_EXT, OUTPUT_FILES } from "../utils/const";
+import playbackTokenService from "./playback-token.service";
+import s3UploadService from "./s3-upload.service";
+
+export interface VideoResponse {
+  id: string;
+  tenantId: string;
+  status: string;
+  stage: string | null;
+  progress: number;
+  orientation: string | null;
+  protection: string;
+  watermark: string;
+  allowOffline: boolean;
+  captionsLangs: string[];
+  sourceBytes: number | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+  readyAt: string | null;
+  /** Present only when status='ready'. Absolute CDN URLs. */
+  playback?: {
+    hls: string;
+    dash: string;
+    poster: string;
+    thumbnailsVtt: string;
+    keyEndpoint: string;
+  } | null;
+}
+
+const toIso = (v: unknown): string =>
+  v instanceof Date ? v.toISOString() : v ? String(v) : "";
+
+const parseBigInt = (v: unknown): number | null =>
+  v === null || v === undefined ? null : typeof v === "string" ? parseInt(v, 10) : Number(v);
+
+function cdnUrl(outputPrefix: string, file: string): string {
+  const base = config.R2_PUBLIC_BASE.replace(/\/+$/, "");
+  return `${base}/${outputPrefix}/${file}`;
+}
+
+function toVideoResponse(row: VideoRow): VideoResponse {
+  const isReady = row.status === video_status.ready;
+  const prefix = row.output_prefix ?? `${row.tenant_id}/${row.id}`;
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    status: row.status,
+    stage: row.stage ?? null,
+    progress: row.progress,
+    orientation: row.orientation ?? null,
+    protection: row.protection,
+    watermark: row.watermark,
+    allowOffline: Boolean(row.allow_offline),
+    captionsLangs: row.captions_langs ?? [],
+    sourceBytes: parseBigInt(row.source_bytes),
+    error: row.error ?? null,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+    readyAt: row.ready_at ? toIso(row.ready_at) : null,
+    playback:
+      isReady && config.R2_PUBLIC_BASE
+        ? {
+            hls: cdnUrl(prefix, OUTPUT_FILES.hlsMaster),
+            dash: cdnUrl(prefix, OUTPUT_FILES.dashManifest),
+            poster: cdnUrl(prefix, OUTPUT_FILES.poster),
+            thumbnailsVtt: cdnUrl(prefix, OUTPUT_FILES.thumbnailsVtt),
+            keyEndpoint: `/videos/${row.id}/key`,
+          }
+        : null,
+  };
+}
+
+class VideosService {
+  /** POST /videos/uploads, validate + cap + create row + presigned POST. */
+  async createUpload(
+    tenantId: string,
+    filename: string
+  ): Promise<{ videoId: string; upload: PresignedPost }> {
+    const ext = String(filename ?? "").split(".").pop()?.toLowerCase();
+    if (!ext || !ALLOWED_UPLOAD_EXT.has(ext)) {
+      throw new UnprocessableError("Unsupported file type");
+    }
+
+    const inFlight = await videosRepository.countInFlight(tenantId);
+    if (inFlight >= config.MAX_IN_FLIGHT) {
+      throw new TooManyRequestError("Too many videos in flight");
+    }
+
+    // Generate the id up front so the S3 key embeds it (key = prefix/original.ext).
+    const videoId = randomUUID();
+    const sourceKey = `${tenantId}/${videoId}/original.${ext}`;
+    const outputPrefix = `${tenantId}/${videoId}`;
+
+    // create() generates its own id; align the row id with the key's id.
+    const row = await videosRepository.create({
+      tenantId,
+      sourceKey,
+      outputPrefix,
+    });
+
+    const upload = await s3UploadService.createPresignedUpload(
+      row.source_key as string,
+      config.MAX_UPLOAD_BYTES
+    );
+    return { videoId: row.id, upload };
+  }
+
+  /** POST /videos/:id/complete, HeadObject verify, then enqueue (uploading → uploaded). */
+  async completeUpload(tenantId: string, id: string): Promise<{ videoId: string; status: string }> {
+    const video = await videosRepository.findByIdForTenant(id, tenantId);
+    if (!video) throw new NotFoundError("Video not found");
+    if (video.status !== video_status.uploading) {
+      throw new ConflictError(`Cannot complete from ${video.status}`);
+    }
+    if (!video.source_key) throw new BadRequestError("Video has no source key");
+
+    const size = await s3UploadService.getUploadedSize(video.source_key);
+    if (size === null) throw new UnprocessableError("Upload not found in storage");
+
+    await videosRepository.markUploaded(id, tenantId, size);
+    return { videoId: id, status: video_status.uploaded };
+  }
+
+  async getVideo(tenantId: string, id: string): Promise<VideoResponse> {
+    const video = await videosRepository.findByIdForTenant(id, tenantId);
+    if (!video) throw new NotFoundError("Video not found");
+    return toVideoResponse(video);
+  }
+
+  async listVideos(
+    tenantId: string,
+    params: { status?: string; page?: number; limit?: number }
+  ): Promise<{ videos: VideoResponse[]; total: number; page: number; limit: number }> {
+    const result = await videosRepository.listByTenant(tenantId, params);
+    return { ...result, videos: result.videos.map(toVideoResponse) };
+  }
+
+  async retry(tenantId: string, id: string): Promise<VideoResponse> {
+    const video = await videosRepository.findByIdForTenant(id, tenantId);
+    if (!video) throw new NotFoundError("Video not found");
+    if (video.status !== video_status.failed) {
+      throw new ConflictError(`Can only retry failed videos (current: ${video.status})`);
+    }
+    await videosRepository.retry(id, tenantId);
+    return this.getVideo(tenantId, id);
+  }
+
+  async cancel(tenantId: string, id: string): Promise<VideoResponse> {
+    const video = await videosRepository.findByIdForTenant(id, tenantId);
+    if (!video) throw new NotFoundError("Video not found");
+    const ok = await videosRepository.cancel(id, tenantId);
+    if (!ok) throw new ConflictError(`Cannot cancel a ${video.status} video`);
+    return this.getVideo(tenantId, id);
+  }
+
+  /**
+   * Mint a short-TTL playback token for a viewer. The CALLER (platform backend
+   * via service auth) is responsible for the enrollment check; this just binds
+   * the token to {tenant, user, video}. Video must exist; need not be ready yet
+   * (player fetches the token then waits, but we 404 unknown videos).
+   */
+  async mintPlaybackToken(
+    tenantId: string,
+    id: string,
+    userId: string,
+    ttlSeconds?: number
+  ): Promise<{ token: string; expiresAt: string; ttlSeconds: number; videoId: string }> {
+    const video = await videosRepository.findByIdForTenant(id, tenantId);
+    if (!video) throw new NotFoundError("Video not found");
+    const minted = playbackTokenService.mint({ tenantId, userId, videoId: id, ttlSeconds });
+    return { ...minted, videoId: id };
+  }
+}
+
+export default new VideosService();

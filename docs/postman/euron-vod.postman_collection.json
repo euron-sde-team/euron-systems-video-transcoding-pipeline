@@ -1,0 +1,200 @@
+{
+  "info": {
+    "name": "Euron VOD Pipeline",
+    "_postman_id": "euron-vod-collection",
+    "description": "Upload + manage + play videos against the API service. Works the same whether workers run locally, on a single dev EC2, or as a Lambda + Spot fleet (the API surface is identical). Set the collection variables (baseUrl, serviceKey, tenantId), then run requests 1 -> 2 -> 3 -> 4, then 8 -> 9. Requests 1 and 8 auto-populate variables for the later requests via test scripts.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4020/api/v1", "type": "string" },
+    { "key": "serviceKey", "value": "local-dev-service-key", "type": "string" },
+    { "key": "tenantId", "value": "11111111-1111-1111-1111-111111111111", "type": "string" },
+    { "key": "userId", "value": "demo-user", "type": "string" },
+    { "key": "videoId", "value": "", "type": "string" },
+    { "key": "uploadUrl", "value": "", "type": "string" },
+    { "key": "playbackToken", "value": "", "type": "string" },
+    { "key": "up_key", "value": "" },
+    { "key": "up_bucket", "value": "" },
+    { "key": "up_algo", "value": "" },
+    { "key": "up_cred", "value": "" },
+    { "key": "up_date", "value": "" },
+    { "key": "up_policy", "value": "" },
+    { "key": "up_sig", "value": "" },
+    { "key": "up_token", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "0. Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+      }
+    },
+    {
+      "name": "1. Create upload (presigned POST)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const d = pm.response.json().data;",
+              "pm.collectionVariables.set('videoId', d.videoId);",
+              "pm.collectionVariables.set('uploadUrl', d.upload.url);",
+              "const f = d.upload.fields || {};",
+              "pm.collectionVariables.set('up_key', f.key || '');",
+              "pm.collectionVariables.set('up_bucket', f.bucket || '');",
+              "pm.collectionVariables.set('up_algo', f['X-Amz-Algorithm'] || '');",
+              "pm.collectionVariables.set('up_cred', f['X-Amz-Credential'] || '');",
+              "pm.collectionVariables.set('up_date', f['X-Amz-Date'] || '');",
+              "pm.collectionVariables.set('up_policy', f.Policy || '');",
+              "pm.collectionVariables.set('up_sig', f['X-Amz-Signature'] || '');",
+              "pm.collectionVariables.set('up_token', f['X-Amz-Security-Token'] || '');",
+              "console.log('videoId =', d.videoId);",
+              "console.log('uploadUrl =', d.upload.url);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{serviceKey}}" },
+          { "key": "X-Tenant-Id", "value": "{{tenantId}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"filename\": \"sample.mp4\"\n}" },
+        "url": { "raw": "{{baseUrl}}/videos/uploads", "host": ["{{baseUrl}}"], "path": ["videos", "uploads"] }
+      }
+    },
+    {
+      "name": "2. Upload file to storage (S3/MinIO, presigned)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "key", "value": "{{up_key}}", "type": "text" },
+            { "key": "bucket", "value": "{{up_bucket}}", "type": "text" },
+            { "key": "X-Amz-Algorithm", "value": "{{up_algo}}", "type": "text" },
+            { "key": "X-Amz-Credential", "value": "{{up_cred}}", "type": "text" },
+            { "key": "X-Amz-Date", "value": "{{up_date}}", "type": "text" },
+            { "key": "X-Amz-Security-Token", "value": "{{up_token}}", "type": "text", "description": "only present when the API uses temporary (role) credentials; leave blank otherwise" },
+            { "key": "Policy", "value": "{{up_policy}}", "type": "text" },
+            { "key": "X-Amz-Signature", "value": "{{up_sig}}", "type": "text" },
+            { "key": "Content-Type", "value": "video/mp4", "type": "text" },
+            { "key": "file", "type": "file", "src": "", "description": "Select your local video file here. MUST be the LAST field." }
+          ]
+        },
+        "url": { "raw": "{{uploadUrl}}", "host": ["{{uploadUrl}}"] },
+        "description": "POSTs the file directly to S3/MinIO using the presigned fields from request 1. Our API does not see the bytes. If you used temporary creds and there is no X-Amz-Security-Token, delete that row. Select the file in the 'file' field."
+      }
+    },
+    {
+      "name": "3. Complete upload (verify + enqueue)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{serviceKey}}" },
+          { "key": "X-Tenant-Id", "value": "{{tenantId}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/videos/{{videoId}}/complete", "host": ["{{baseUrl}}"], "path": ["videos", "{{videoId}}", "complete"] }
+      }
+    },
+    {
+      "name": "4. Get video (poll status/stage/progress)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{serviceKey}}" },
+          { "key": "X-Tenant-Id", "value": "{{tenantId}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/videos/{{videoId}}", "host": ["{{baseUrl}}"], "path": ["videos", "{{videoId}}"] }
+      }
+    },
+    {
+      "name": "5. List videos",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{serviceKey}}" },
+          { "key": "X-Tenant-Id", "value": "{{tenantId}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/videos?status=&page=1&limit=20",
+          "host": ["{{baseUrl}}"],
+          "path": ["videos"],
+          "query": [
+            { "key": "status", "value": "" },
+            { "key": "page", "value": "1" },
+            { "key": "limit", "value": "20" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "6. Retry video (failed -> uploaded)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{serviceKey}}" },
+          { "key": "X-Tenant-Id", "value": "{{tenantId}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/videos/{{videoId}}/retry", "host": ["{{baseUrl}}"], "path": ["videos", "{{videoId}}", "retry"] }
+      }
+    },
+    {
+      "name": "7. Cancel video",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{serviceKey}}" },
+          { "key": "X-Tenant-Id", "value": "{{tenantId}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/videos/{{videoId}}/cancel", "host": ["{{baseUrl}}"], "path": ["videos", "{{videoId}}", "cancel"] }
+      }
+    },
+    {
+      "name": "8. Mint playback token",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const d = pm.response.json().data;",
+              "pm.collectionVariables.set('playbackToken', d.token);",
+              "console.log('playbackToken set (ttl', d.ttlSeconds, 's)');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{serviceKey}}" },
+          { "key": "X-Tenant-Id", "value": "{{tenantId}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"userId\": \"{{userId}}\"\n}" },
+        "url": { "raw": "{{baseUrl}}/videos/{{videoId}}/playback-token", "host": ["{{baseUrl}}"], "path": ["videos", "{{videoId}}", "playback-token"] }
+      }
+    },
+    {
+      "name": "9. Get content key (Shaka clearKeys JSON)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/videos/{{videoId}}/key?token={{playbackToken}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["videos", "{{videoId}}", "key"],
+          "query": [{ "key": "token", "value": "{{playbackToken}}" }]
+        },
+        "description": "Returns { kid, k, clearKeys }. Add &format=raw to get the 16 raw key bytes (native HLS). Auth is the playback token (query param), NOT the service key."
+      }
+    }
+  ]
+}

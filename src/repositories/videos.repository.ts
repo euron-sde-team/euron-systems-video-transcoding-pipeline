@@ -1,0 +1,167 @@
+import { randomUUID } from "crypto";
+import type { Selectable, Transaction } from "kysely";
+import { db } from "../db/connection";
+import { video_status } from "../db/enums";
+import type { DB, videos } from "../db/types";
+
+export type VideoRow = Selectable<videos>;
+
+type Trx = Transaction<DB>;
+
+interface CreateVideoInput {
+  tenantId: string;
+  sourceKey: string;
+  outputPrefix: string;
+}
+
+interface ListParams {
+  status?: string;
+  page?: number;
+  limit?: number;
+}
+
+/**
+ * All reads/writes for the `videos` table EXCEPT the queue-claim mechanics,
+ * which live in db/queue.ts (raw SQL with FOR UPDATE SKIP LOCKED). Every method
+ * is tenant-scoped, tenant_id is in every WHERE clause.
+ */
+class VideosRepository {
+  async create(input: CreateVideoInput, trx?: Trx): Promise<VideoRow> {
+    const id = randomUUID();
+    const row = await (trx || db)
+      .insertInto("videos")
+      .values({
+        id,
+        tenant_id: input.tenantId,
+        status: video_status.uploading,
+        source_key: input.sourceKey,
+        output_prefix: input.outputPrefix,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    return row;
+  }
+
+  async findById(id: string, trx?: Trx): Promise<VideoRow | null> {
+    const row = await (trx || db)
+      .selectFrom("videos")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirst();
+    return row ?? null;
+  }
+
+  async findByIdForTenant(id: string, tenantId: string, trx?: Trx): Promise<VideoRow | null> {
+    const row = await (trx || db)
+      .selectFrom("videos")
+      .selectAll()
+      .where("id", "=", id)
+      .where("tenant_id", "=", tenantId)
+      .executeTakeFirst();
+    return row ?? null;
+  }
+
+  /** In-flight count = uploads not yet terminal. Gates the per-tenant cap. */
+  async countInFlight(tenantId: string): Promise<number> {
+    const row = await db
+      .selectFrom("videos")
+      .select(db.fn.countAll<string>().as("n"))
+      .where("tenant_id", "=", tenantId)
+      .where("status", "in", [
+        video_status.uploading,
+        video_status.uploaded,
+        video_status.processing,
+      ])
+      .executeTakeFirst();
+    return Number(row?.n ?? 0);
+  }
+
+  /** ENQUEUE: uploading → uploaded, recording the verified byte size. Returns true if flipped. */
+  async markUploaded(id: string, tenantId: string, sourceBytes: number): Promise<boolean> {
+    const result = await db
+      .updateTable("videos")
+      .set({
+        status: video_status.uploaded,
+        source_bytes: String(sourceBytes), // pg bigint ↔ JS string
+        updated_at: new Date(),
+      })
+      .where("id", "=", id)
+      .where("tenant_id", "=", tenantId)
+      .where("status", "=", video_status.uploading)
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows ?? 0n) > 0;
+  }
+
+  async listByTenant(
+    tenantId: string,
+    params: ListParams
+  ): Promise<{ videos: VideoRow[]; total: number; page: number; limit: number }> {
+    const page = Math.max(1, params.page ?? 1);
+    const limit = Math.min(100, Math.max(1, params.limit ?? 20));
+    const offset = (page - 1) * limit;
+
+    let listQuery = db.selectFrom("videos").selectAll().where("tenant_id", "=", tenantId);
+    let countQuery = db
+      .selectFrom("videos")
+      .select(db.fn.countAll<string>().as("n"))
+      .where("tenant_id", "=", tenantId);
+
+    if (params.status) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      listQuery = listQuery.where("status", "=", params.status as any);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      countQuery = countQuery.where("status", "=", params.status as any);
+    }
+
+    const [rows, countRow] = await Promise.all([
+      listQuery.orderBy("created_at", "desc").limit(limit).offset(offset).execute(),
+      countQuery.executeTakeFirst(),
+    ]);
+
+    return {
+      videos: rows as VideoRow[],
+      total: Number(countRow?.n ?? 0),
+      page,
+      limit,
+    };
+  }
+
+  /** RETRY: failed → uploaded, resetting attempts so the worker reprocesses it. */
+  async retry(id: string, tenantId: string): Promise<boolean> {
+    const result = await db
+      .updateTable("videos")
+      .set({
+        status: video_status.uploaded,
+        attempts: 0,
+        error: null,
+        stage: null,
+        locked_by: null,
+        locked_at: null,
+        heartbeat_at: null,
+        updated_at: new Date(),
+      })
+      .where("id", "=", id)
+      .where("tenant_id", "=", tenantId)
+      .where("status", "=", video_status.failed)
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows ?? 0n) > 0;
+  }
+
+  /** CANCEL: only pre-terminal, non-processing states (uploading/uploaded/failed). */
+  async cancel(id: string, tenantId: string): Promise<boolean> {
+    const result = await db
+      .updateTable("videos")
+      .set({ status: video_status.cancelled, updated_at: new Date() })
+      .where("id", "=", id)
+      .where("tenant_id", "=", tenantId)
+      .where("status", "in", [
+        video_status.uploading,
+        video_status.uploaded,
+        video_status.failed,
+      ])
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows ?? 0n) > 0;
+  }
+}
+
+export default new VideosRepository();

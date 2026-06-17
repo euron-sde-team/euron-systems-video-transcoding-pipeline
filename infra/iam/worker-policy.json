@@ -1,0 +1,36 @@
+{
+  "_comment": "Per-environment worker instance-role policy. Substitute <ACCOUNT_ID>, <UPLOAD_BUCKET> (e.g. euron-uploads-dev), <SSM_PREFIX> (e.g. euron-vod-dev), <KEY_KMS_KEY_ARN>, <SSM_KMS_KEY_ARN>. NO ec2 perms (workers self-terminate via the OS). R2 is non-AWS; its creds come from SSM.",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadRawUploads",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": "arn:aws:s3:::<UPLOAD_BUCKET>/*"
+    },
+    {
+      "Sid": "UnwrapContentKeys",
+      "Effect": "Allow",
+      "Action": ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"],
+      "Resource": "<KEY_KMS_KEY_ARN>"
+    },
+    {
+      "Sid": "ReadRuntimeSecrets",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"],
+      "Resource": "arn:aws:ssm:*:<ACCOUNT_ID>:parameter/<SSM_PREFIX>/*"
+    },
+    {
+      "Sid": "DecryptSecureStrings",
+      "Effect": "Allow",
+      "Action": ["kms:Decrypt"],
+      "Resource": "<SSM_KMS_KEY_ARN>"
+    },
+    {
+      "Sid": "Logs",
+      "Effect": "Allow",
+      "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+      "Resource": "*"
+    }
+  ]
+}
