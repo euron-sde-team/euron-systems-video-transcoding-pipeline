@@ -6,6 +6,7 @@ import {
   getVideo,
   listVideos,
   mintPlaybackToken,
+  renameVideo,
   retryVideo,
 } from "../controllers/videos.controller";
 import { getVideoKey } from "../controllers/key.controller";
@@ -18,6 +19,7 @@ const router = Router();
 router.post("/uploads", asyncHandler(requireServiceAuth), asyncHandler(createUpload));
 router.get("/", asyncHandler(requireServiceAuth), asyncHandler(listVideos));
 router.get("/:id", asyncHandler(requireServiceAuth), asyncHandler(getVideo));
+router.patch("/:id", asyncHandler(requireServiceAuth), asyncHandler(renameVideo));
 router.post("/:id/complete", asyncHandler(requireServiceAuth), asyncHandler(completeUpload));
 router.post("/:id/retry", asyncHandler(requireServiceAuth), asyncHandler(retryVideo));
 router.post("/:id/cancel", asyncHandler(requireServiceAuth), asyncHandler(cancelVideo));

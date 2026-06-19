@@ -8,7 +8,8 @@ export const createUpload = async (req: Request, res: Response) => {
   const tenantId = getTenantId(req);
   const filename = String(req.body?.filename ?? "");
   if (!filename) throw new BadRequestError("filename is required");
-  const result = await videosService.createUpload(tenantId, filename);
+  const title = req.body?.title ? String(req.body.title) : undefined;
+  const result = await videosService.createUpload(tenantId, filename, title);
   sendSuccessResponse({
     res,
     data: result,
@@ -48,6 +49,14 @@ export const cancelVideo = async (req: Request, res: Response) => {
   const tenantId = getTenantId(req);
   const result = await videosService.cancel(tenantId, req.params.id as string);
   sendSuccessResponse({ res, data: result, statusCode: HttpSuccessStatus.OK, message: "Video cancelled" });
+};
+
+export const renameVideo = async (req: Request, res: Response) => {
+  const tenantId = getTenantId(req);
+  const title = String(req.body?.title ?? "").trim();
+  if (!title) throw new BadRequestError("title is required");
+  const result = await videosService.rename(tenantId, req.params.id as string, title);
+  sendSuccessResponse({ res, data: result, statusCode: HttpSuccessStatus.OK, message: "Video renamed" });
 };
 
 export const mintPlaybackToken = async (req: Request, res: Response) => {

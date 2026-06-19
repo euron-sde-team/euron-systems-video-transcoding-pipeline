@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import type { Selectable, Transaction } from "kysely";
+import { sql } from "kysely";
 import { db } from "../db/connection";
 import { video_status } from "../db/enums";
 import type { DB, videos } from "../db/types";
@@ -12,6 +13,8 @@ interface CreateVideoInput {
   tenantId: string;
   sourceKey: string;
   outputPrefix: string;
+  /** Human-friendly title; stored inside pipeline_config (no schema column). */
+  title?: string;
 }
 
 interface ListParams {
@@ -36,10 +39,26 @@ class VideosRepository {
         status: video_status.uploading,
         source_key: input.sourceKey,
         output_prefix: input.outputPrefix,
+        // pipeline_config is jsonb; pass a JSON string (never double-serialize).
+        ...(input.title ? { pipeline_config: JSON.stringify({ title: input.title }) } : {}),
       })
       .returningAll()
       .executeTakeFirstOrThrow();
     return row;
+  }
+
+  /** Merge a new title into pipeline_config jsonb (atomic, preserves other keys). */
+  async setTitle(id: string, tenantId: string, title: string): Promise<boolean> {
+    const result = await db
+      .updateTable("videos")
+      .set({
+        pipeline_config: sql`coalesce(pipeline_config, '{}'::jsonb) || jsonb_build_object('title', ${title}::text)`,
+        updated_at: new Date(),
+      })
+      .where("id", "=", id)
+      .where("tenant_id", "=", tenantId)
+      .executeTakeFirst();
+    return Number(result.numUpdatedRows ?? 0n) > 0;
   }
 
   async findById(id: string, trx?: Trx): Promise<VideoRow | null> {

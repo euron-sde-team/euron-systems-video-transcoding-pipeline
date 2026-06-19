@@ -3,7 +3,16 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["dist/**", "dist-lambda/**", "player/dist/**", "node_modules/**", "src/db/types.ts", "src/db/enums.ts"],
+    ignores: [
+      "dist/**",
+      "dist-lambda/**",
+      "player/dist/**",
+      // frontend/ is a separate package with its own ESLint config; do not lint it here.
+      "frontend/**",
+      "node_modules/**",
+      "src/db/types.ts",
+      "src/db/enums.ts",
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

@@ -67,7 +67,8 @@ export const transcodePipeline = async (
       renditionsDir,
       ladder,
       probed.hasAudio,
-      probed.rotation
+      probed.rotation,
+      probed.durationSec
     );
     await hb.update("transcoding", 55);
 

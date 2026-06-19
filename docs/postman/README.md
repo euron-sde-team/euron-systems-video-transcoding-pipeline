@@ -4,11 +4,33 @@ Import `euron-vod.postman_collection.json` (Postman -> Import). It drives the AP
 the only HTTP surface in the system. The orchestrator Lambda (cron-triggered) and the Spot workers
 (DB pollers) are NOT HTTP and are not in this collection; you do not hit them from Postman.
 
+## Environments (dev / prod)
+The collection is variable-driven, so the same requests work against any environment.
+- **dev**: the collection ships with dev defaults baked into its collection variables (`baseUrl`
+  `http://localhost:4020/api/v1`, the dev `serviceKey`, etc.). Select "No Environment" and it just works.
+- **prod**: import `euron-vod-prod.postman_environment.json` (Postman -> Import) and select it from the
+  environment dropdown (top-right). It overrides `baseUrl`, `serviceKey`, `tenantId`, `userId`;
+  everything else (auto-populated `videoId` / `uploadUrl` / `up_*` / `playbackToken`) is unchanged.
+
+What actually differs in prod vs dev:
+- `serviceKey` is the prod `SERVICE_API_KEY` (already in the env file).
+- `tenantId` is a **placeholder** UUID in the env file; replace it with a real prod tenant UUID.
+- `baseUrl` stays `localhost:4020` because the prod API also runs **on your machine** (pointed at the
+  prod DB via your IP-proxy and prod S3/KMS/R2 via its `.env`). The prod ngrok URL is only the worker's
+  `PUBLIC_API_BASE` + external playback, not how Postman drives the API.
+- Request 2's `X-Amz-Security-Token` row stays **disabled** (the prod API presigns with static
+  IAM-user keys, same as dev).
+- Playback in prod is via `R2_PUBLIC_BASE = https://vod-cdn.euronsystems.com` (bind that custom domain
+  to the `euron-vod-prod` R2 bucket in Cloudflare). Use the **DASH** manifest, not native HLS: the
+  ngrok-free interstitial breaks the baked HLS `#EXT-X-KEY` URI.
+
 ## What runs where (dev with Lambda + Spot)
 - **API service**: the thing Postman talks to. Run it on a dev box (or locally) pointed at the dev
   DB + dev S3. Set `baseUrl` to its URL.
 - **Lambda**: scales workers up on a 1-minute EventBridge cron. To force a tick without waiting:
-  `aws lambda invoke --function-name euron-vod-orchestrator-dev /dev/stdout`.
+  `aws lambda invoke --function-name euron-vod-orchestrator-dev /dev/stdout` (prod:
+  `--function-name euron-vod-orchestrator-prod`). A healthy tick returns
+  `{"reaped":0,"backlog":0,"running":0,...}`.
 - **Spot workers**: claim from the DB queue, transcode, upload to R2, mark `ready`. No endpoint.
 
 ## Variables (set on the collection)

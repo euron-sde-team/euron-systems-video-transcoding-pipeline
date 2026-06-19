@@ -15,6 +15,10 @@ import s3UploadService from "./s3-upload.service";
 export interface VideoResponse {
   id: string;
   tenantId: string;
+  /** Operator-set title (stored in pipeline_config). Null when never set. */
+  title: string | null;
+  /** Always-present label for UI: the title, else a short id fallback. */
+  displayName: string;
   status: string;
   stage: string | null;
   progress: number;
@@ -52,9 +56,13 @@ function cdnUrl(outputPrefix: string, file: string): string {
 function toVideoResponse(row: VideoRow): VideoResponse {
   const isReady = row.status === video_status.ready;
   const prefix = row.output_prefix ?? `${row.tenant_id}/${row.id}`;
+  const pc = (row.pipeline_config ?? {}) as { title?: string };
+  const title = typeof pc.title === "string" && pc.title.trim() ? pc.title.trim() : null;
   return {
     id: row.id,
     tenantId: row.tenant_id,
+    title,
+    displayName: title ?? `Video ${row.id.slice(0, 8)}`,
     status: row.status,
     stage: row.stage ?? null,
     progress: row.progress,
@@ -85,7 +93,8 @@ class VideosService {
   /** POST /videos/uploads, validate + cap + create row + presigned POST. */
   async createUpload(
     tenantId: string,
-    filename: string
+    filename: string,
+    title?: string
   ): Promise<{ videoId: string; upload: PresignedPost }> {
     const ext = String(filename ?? "").split(".").pop()?.toLowerCase();
     if (!ext || !ALLOWED_UPLOAD_EXT.has(ext)) {
@@ -102,11 +111,15 @@ class VideosService {
     const sourceKey = `${tenantId}/${videoId}/original.${ext}`;
     const outputPrefix = `${tenantId}/${videoId}`;
 
+    // Default the title to the original filename so the dashboard never shows a bare id.
+    const resolvedTitle = title?.trim() || filename.trim();
+
     // create() generates its own id; align the row id with the key's id.
     const row = await videosRepository.create({
       tenantId,
       sourceKey,
       outputPrefix,
+      title: resolvedTitle || undefined,
     });
 
     const upload = await s3UploadService.createPresignedUpload(
@@ -161,6 +174,14 @@ class VideosService {
     if (!video) throw new NotFoundError("Video not found");
     const ok = await videosRepository.cancel(id, tenantId);
     if (!ok) throw new ConflictError(`Cannot cancel a ${video.status} video`);
+    return this.getVideo(tenantId, id);
+  }
+
+  /** PATCH /videos/:id, rename the video (title lives in pipeline_config). */
+  async rename(tenantId: string, id: string, title: string): Promise<VideoResponse> {
+    const video = await videosRepository.findByIdForTenant(id, tenantId);
+    if (!video) throw new NotFoundError("Video not found");
+    await videosRepository.setTitle(id, tenantId, title.trim());
     return this.getVideo(tenantId, id);
   }
 

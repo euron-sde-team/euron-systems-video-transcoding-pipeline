@@ -27,7 +27,8 @@ export const transcode = async (
   workDir: string,
   rungs: Rung[],
   hasAudio: boolean,
-  rotation = 0
+  rotation = 0,
+  durationSec = 0
 ): Promise<TranscodeResult> => {
   // Clockwise display rotation, applied BEFORE the split so every rung inherits
   // it from the single decode. ffmpeg does NOT autorotate complex-filtergraph
@@ -54,6 +55,15 @@ export const transcode = async (
   if (rotFilter) args.push("-noautorotate"); // input option: must precede -i
   args.push("-i", inputPath, "-filter_complex", filterComplex);
 
+  // Bound every output to the probed source duration. filter_complex outputs have
+  // no intrinsic duration, so ffmpeg otherwise writes the "unknown" sentinel
+  // (0xFFFFFFFF) into the MP4 mvhd; Shaka Packager then copies that into the DASH
+  // MPD's mediaPresentationDuration (~2^32 s), which makes DASH playback stall and
+  // report a bogus duration (HLS is unaffected, it sums #EXTINF). An explicit
+  // output -t gives every rendition a correct, finite duration. Skipped (=0) only
+  // if the probe could not determine a duration.
+  const durationArgs = durationSec > 0 ? ["-t", String(durationSec)] : [];
+
   const videoFiles: { rung: Rung; file: string }[] = [];
   rungs.forEach((rung, i) => {
     const file = path.join(workDir, `v_${rung.name}.mp4`);
@@ -70,6 +80,7 @@ export const transcode = async (
       "-threads", "0",
       "-force_key_frames", "expr:gte(t,n_forced*4)",
       "-an",
+      ...durationArgs,
       "-movflags", "+faststart",
       file
     );
@@ -84,6 +95,7 @@ export const transcode = async (
       "-b:a", "128k",
       "-ac", "2",
       "-vn",
+      ...durationArgs,
       audioFile
     );
   }
