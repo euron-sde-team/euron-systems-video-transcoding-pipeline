@@ -4,6 +4,20 @@ dotenv.config();
 const NODE_ENV = process.env.NODE_ENV ?? "development";
 
 /**
+ * Parse a comma-separated env list (e.g. "subnet-a,subnet-b"). Falls back to a
+ * single legacy scalar when the plural form is unset, so old single-AZ configs
+ * keep working unchanged.
+ */
+const parseList = (csv: string | undefined, fallback: string | undefined): string[] => {
+  const items = (csv ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (items.length > 0) return items;
+  return fallback ? [fallback] : [];
+};
+
+/**
  * Centralized env config for all three runtimes (API, worker, orchestrator).
  * Each runtime reads only the slice it needs; unset values fall back to safe
  * dev defaults so the service boots before the developer wires real creds.
@@ -72,6 +86,25 @@ const config = {
   WORKER_INSTANCE_TYPE: process.env.WORKER_INSTANCE_TYPE ?? "c7g.xlarge",
   WORKER_SUBNET_ID: process.env.WORKER_SUBNET_ID ?? "",
   WORKER_ROLE_TAG: process.env.WORKER_ROLE_TAG ?? "transcoder",
+  // Multi-AZ launch (CreateFleet). The orchestrator fans out across EVERY subnet
+  // (one per AZ) × instance type so one AZ's Spot pool running dry can't stall the
+  // fleet. Plural lists fall back to the legacy single WORKER_SUBNET_ID /
+  // WORKER_INSTANCE_TYPE when unset, so older deployments keep working.
+  WORKER_SUBNET_IDS: parseList(process.env.WORKER_SUBNET_IDS, process.env.WORKER_SUBNET_ID),
+  // PRIORITY-ORDERED: the FIRST type is strictly preferred (tried alone across all
+  // AZs first); the rest are fallbacks used only for capacity the preferred type
+  // couldn't supply this minute. See launchWorkers in orchestrator/ec2.ts.
+  WORKER_INSTANCE_TYPES: parseList(
+    process.env.WORKER_INSTANCE_TYPES,
+    process.env.WORKER_INSTANCE_TYPE ?? "c7g.xlarge"
+  ),
+  // Spot pool selection. "capacity-optimized" picks the deepest pool (fewest
+  // interruptions); EC2 Fleet also accepts "price-capacity-optimized" etc.
+  SPOT_ALLOCATION_STRATEGY: process.env.SPOT_ALLOCATION_STRATEGY ?? "capacity-optimized",
+  // Spot-ONLY by policy: NO On-Demand fallback (default off). If no Spot pool has
+  // capacity the launch does nothing and the video stays queued until Spot returns
+  // (the 1-min cron keeps retrying). Set ONDEMAND_FALLBACK=true to opt back in.
+  ONDEMAND_FALLBACK: (process.env.ONDEMAND_FALLBACK ?? "false") === "true",
 
   // ─── Worker (EC2) ──────────────────────────────────────────────────────────
   WORKER_ID: process.env.WORKER_ID ?? "",

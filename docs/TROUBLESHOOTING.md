@@ -140,6 +140,26 @@ and 1 running) before a second worker spawns. This is head-of-line blocking; the
 picks up the queued video when it finishes. (A future improvement: size on `uploaded + processing`,
 or track idle vs busy workers.)
 
+### Backlog stalls with `InsufficientInstanceCapacity` (a whole AZ, or all of Spot, is dry)
+**This should no longer block launches.** The orchestrator launches via **EC2 CreateFleet**
+(`type=instant`) in STRICT instance-type preference tiers: the first `WORKER_INSTANCE_TYPES` entry
+(c7g.xlarge) is tried ALONE across all 3 AZs first (`SpotOptions.AllocationStrategy=capacity-optimized`
+= deepest AZ pool); only the capacity it couldn't supply spills to the remaining (fallback) types,
+again across all AZs. So a single AZ out of Spot no longer fails the launch (another AZ's c7g pool is
+used), and a fallback type is used ONLY when c7g.xlarge is unavailable in every AZ. "Is c7g.xlarge
+available?" is decided by EC2 itself, the tier-1 `instant` fleet either returns instances or doesn't.
+**Spot-only by policy** (`ONDEMAND_FALLBACK=false`): if ALL Spot pools are dry (a region-wide shortage of every listed
+type does happen), the launch does nothing and the video simply **stays queued** until Spot capacity
+returns, the 1-min cron keeps retrying. This is the intended, accepted behavior (no On-Demand spend).
+- An `instant` fleet reports a dry pool in the response `Errors` (e.g. `InsufficientInstanceCapacity`,
+  `UnfulfillableCapacity`), it does NOT throw, so the Lambda logs each per-pool error and launches 0
+  this tick. To check live capacity: `aws ec2 describe-spot-price-history --instance-types <types>`.
+- (Escape hatch, off by default: set `ONDEMAND_FALLBACK=true` to cover a Spot shortfall with On-Demand.)
+- The OLD failure mode (pre-fix): `launchWorkers` used `RunInstances` with a single `SubnetId` and threw
+  `InsufficientInstanceCapacity`, looping every minute until that one AZ happened to free up.
+- Widen capacity by adding subnets/types to the two CSVs; the role tag is applied by the Lambda after
+  launch (and baked in the LT), so `countRunningWorkers` always sees fleet instances.
+
 ### Terminated a worker but the row stayed `processing` (didn't go back to `uploaded`)
 **Cause:** an abrupt `terminate-instances` gives the worker a short SIGTERM grace, often too short for
 its `releaseClaim` DB round-trip to finish (unlike a Spot interruption, which gives a ~2-min notice
@@ -154,9 +174,10 @@ A worker that catches a **Spot interruption notice** gracefully runs `shutdown -
 reclaims it, so the Spot request shows `instance-terminated-by-user` and there's **no
 `BidEvictedEvent`** in CloudTrail; this is correct Spot handling, not an API terminate. The claim is
 released (`releaseClaim`, attempt un-counted) and the orchestrator launches a replacement. There is no
-checkpointing, so each interruption restarts the transcode from scratch; if interruptions are
-frequent for one instance type/AZ, diversify Spot (capacity-optimized across `c7g.xlarge /
-c7g.2xlarge / c8g.xlarge / c6g.xlarge` + multiple subnets/AZs) or use on-demand.
+checkpointing, so each interruption restarts the transcode from scratch. Interruptions are already
+minimized: the fleet spreads `capacity-optimized` Spot across `WORKER_INSTANCE_TYPES` x
+`WORKER_SUBNET_IDS` (multiple types/AZs) and falls back to On-Demand. Widen those CSVs (e.g. add
+`c7g.2xlarge / c8g.xlarge`) if a workload still sees frequent reclaims.
 
 ### Launch template: console shows the old AMI / old config after an update
 **Cause:** `$Latest` != `$Default`. `create-launch-template-version` does NOT promote the new version

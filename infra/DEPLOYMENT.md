@@ -51,7 +51,9 @@ export REGION=ap-south-1
 export ACCOUNT_ID=<AWS_ACCOUNT_ID>
 
 export VPC_ID=<DEV_VPC_ID>
-export WORKER_SUBNET=<DEV_SUBNET_ID>           # subnet with internet egress (NAT or public)
+export WORKER_SUBNETS=<DEV_SUBNET_IDS_CSV>     # ONE per AZ, each with internet egress (NAT or
+                                               # public) AND DB reachability; the fleet spreads
+                                               # across all of them so one AZ's Spot can't block it
 export LAMBDA_SUBNETS=<DEV_PRIVATE_SUBNET_IDS_CSV>
 
 export UPLOAD_BUCKET=euron-vod-uploads-$ENV
@@ -236,8 +238,18 @@ SG, storage 100 GB gp3, Advanced: request Spot + Shutdown behavior `Terminate`, 
 aws ec2 create-launch-template --region $REGION --launch-template-name $LT_NAME \
   --launch-template-data file://infra/launch-template.json
 ```
-Do not also hardcode a subnet/network-interface here; the Lambda passes the subnet at launch. The
-c7g.xlarge in the template and the Lambda's `WORKER_INSTANCE_TYPE` must match (both arm64).
+The orchestrator launches via **EC2 CreateFleet** (type `instant`) and supplies the subnet +
+instance-type as fleet `Overrides`, so this template MUST NOT:
+- set `InstanceMarketOptions` (the fleet's `DefaultTargetCapacityType` decides Spot vs On-Demand; a
+  baked `spot` breaks the On-Demand fallback), or
+- pin a `SubnetId` inside a `NetworkInterface` (it conflicts with the fleet's subnet override).
+
+For subnets that do **not** auto-assign a public IP (e.g. prod's private-style public subnets), give a
+`NetworkInterface` with `AssociatePublicIpAddress:true` + `Groups` but **no** `SubnetId` (the fleet
+fills the subnet). For subnets with `MapPublicIpOnLaunch=true` (e.g. dev), use top-level
+`SecurityGroupIds` and no `NetworkInterface`. Bake the per-env `role` tag in `TagSpecifications` so it
+applies to fleet-launched instances. All instance types in `WORKER_INSTANCE_TYPES` must match the AMI
+arch (arm64 -> Graviton).
 
 > Updating later (new AMI or edited bootstrap): create a new launch-template version, then make it the
 > default. The orchestrator uses `LAUNCH_TEMPLATE_VERSION=$Latest` (highest number) so it picks up new
@@ -268,7 +280,8 @@ aws lambda create-function --region $REGION --function-name $FN_NAME \
   --vpc-config SubnetIds=$LAMBDA_SUBNETS,SecurityGroupIds=$LAMBDA_SG \
   --environment "Variables={DATABASE_URL=$DATABASE_URL,AWS_REGION=$REGION,\
 MAX_WORKERS=5,DIVISOR=2,LAUNCH_TEMPLATE_NAME=$LT_NAME,LAUNCH_TEMPLATE_VERSION=\$Latest,\
-WORKER_INSTANCE_TYPE=c7g.xlarge,WORKER_SUBNET_ID=$WORKER_SUBNET,WORKER_ROLE_TAG=$ROLE_TAG}"
+WORKER_INSTANCE_TYPES=c7g.xlarge,c6g.xlarge,m7g.xlarge,WORKER_SUBNET_IDS=$WORKER_SUBNETS,\
+SPOT_ALLOCATION_STRATEGY=capacity-optimized,ONDEMAND_FALLBACK=false,WORKER_ROLE_TAG=$ROLE_TAG}"
 # redeploy code later:
 aws lambda update-function-code --region $REGION --function-name $FN_NAME --zip-file fileb://orchestrator.zip
 ```

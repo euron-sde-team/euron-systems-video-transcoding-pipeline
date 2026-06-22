@@ -71,6 +71,14 @@ export const packageCmaf = async (input: PackageInput): Promise<PackageResult> =
     "--keys", `label=${DRM_LABEL}:key_id=${input.key.kidHex}:key=${input.key.keyHex}`,
     "--hls_master_playlist_output", "master.m3u8",
     "--mpd_output", "manifest.mpd",
+    // CRITICAL for VOD DASH: with segment_template + $Number$ (segmented output),
+    // Shaka Packager defaults to a LIVE manifest (type="dynamic",
+    // profile=isoff-live, no mediaPresentationDuration, with availabilityStartTime/
+    // minimumUpdatePeriod/timeShiftBufferDepth). Players then treat finite VOD as a
+    // live edge and report a bogus ~2^32 s duration and won't seek/play. This flag
+    // forces a STATIC VOD MPD (type="static" + mediaPresentationDuration computed
+    // from the SegmentTimeline). HLS is VOD already, so it's unaffected.
+    "--generate_static_live_mpd",
     // Keep shaka's temp files on the SAME filesystem as the output. Without this,
     // shaka writes temp files under the OS temp dir (/tmp, a tmpfs on AL2023) and
     // then atomically rename()s them onto manifest.mpd in WORK_DIR (/mnt, EBS). A

@@ -1,5 +1,5 @@
 {
-  "_comment": "ARM64 (Graviton) Spot worker launch template. ImageId MUST be an arm64 AMI (see ami-build.md); InstanceType is c7g.xlarge (Graviton3). Create with: aws ec2 create-launch-template --launch-template-name transcoder-<env> --launch-template-data file://launch-template.json. The Lambda references it by name and overrides subnet/spot/tags at RunInstances. UserData = base64 of the per-env bootstrap (infra/ami-bootstrap-dev.sh for dev, infra/ami-bootstrap-prod.sh for prod; SSM prefix is hardcoded in each). Replace ALL <...> placeholders.",
+  "_comment": "ARM64 (Graviton) worker launch template. ImageId MUST be an arm64 AMI (see ami-build.md). Create with: aws ec2 create-launch-template --launch-template-name transcoder-<env> --launch-template-data file://launch-template.json. The orchestrator launches via EC2 CreateFleet (type=instant), supplying subnet+instance-type Overrides (WORKER_SUBNET_IDS x WORKER_INSTANCE_TYPES) and deciding Spot-vs-On-Demand itself, so this template MUST NOT set InstanceMarketOptions, and MUST NOT pin a SubnetId (a subnet baked into a NetworkInterface conflicts with the fleet's subnet override). For subnets that do NOT auto-assign a public IP, give a NetworkInterface with AssociatePublicIpAddress:true + Groups but NO SubnetId (the fleet fills the subnet); for auto-assign subnets, use top-level SecurityGroupIds and no NetworkInterface. Bake the instance role tag here (TagSpecifications) so it applies to fleet-launched instances. UserData = base64 of the per-env bootstrap (infra/ami-bootstrap-dev.sh / infra/ami-bootstrap-prod.sh; SSM prefix hardcoded in each). Replace ALL <...> placeholders.",
   "LaunchTemplateName": "transcoder",
   "LaunchTemplateData": {
     "ImageId": "<BAKED_ARM64_AMI_ID>",
@@ -7,10 +7,6 @@
     "IamInstanceProfile": { "Name": "euron-vod-worker-profile" },
     "SecurityGroupIds": ["<WORKER_SECURITY_GROUP_ID>"],
     "InstanceInitiatedShutdownBehavior": "terminate",
-    "InstanceMarketOptions": {
-      "MarketType": "spot",
-      "SpotOptions": { "SpotInstanceType": "one-time", "InstanceInterruptionBehavior": "terminate" }
-    },
     "BlockDeviceMappings": [
       {
         "DeviceName": "/dev/xvda",

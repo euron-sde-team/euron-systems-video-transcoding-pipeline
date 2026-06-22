@@ -29,6 +29,28 @@ function extOf(name: string): string {
   return name.split(".").pop()?.toLowerCase() ?? "";
 }
 
+/** Fallback MIME per allowed container, for files whose browser-reported type is
+ * blank (common for .mkv / .m4v). */
+const EXT_CONTENT_TYPE: Record<string, string> = {
+  mp4: "video/mp4",
+  mov: "video/quicktime",
+  mkv: "video/x-matroska",
+  webm: "video/webm",
+  m4v: "video/x-m4v",
+};
+
+/**
+ * The presigned POST policy enforces ["starts-with", "$Content-Type", "video/"],
+ * so the upload MUST carry a Content-Type form field that begins with "video/".
+ * Prefer the browser's own file.type when it is a video/* MIME; otherwise fall back
+ * to the extension map (some containers report an empty type) so the field is always
+ * a valid video/* value and the policy condition passes.
+ */
+function contentTypeFor(file: File): string {
+  if (file.type.startsWith("video/")) return file.type;
+  return EXT_CONTENT_TYPE[extOf(file.name)] ?? "video/mp4";
+}
+
 let counter = 0;
 function nextId(): string {
   counter += 1;
@@ -72,6 +94,11 @@ export function useUploadManager() {
         const form = new FormData();
         // S3/MinIO presigned POST requires the policy fields BEFORE the file field.
         Object.entries(fields).forEach(([k, v]) => form.append(k, v));
+        // The policy enforces ["starts-with", "$Content-Type", "video/"]. The AWS SDK
+        // never returns a Content-Type field, and the browser-set file-part header is
+        // NOT what S3 validates, so send it explicitly (before "file") or every upload
+        // 403s. S3 ignores any field that appears after the file field.
+        form.append("Content-Type", contentTypeFor(file));
         form.append("file", file);
 
         const xhr = new XMLHttpRequest();
