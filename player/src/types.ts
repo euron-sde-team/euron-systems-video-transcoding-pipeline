@@ -42,4 +42,11 @@ export interface EuronPlayerConfig {
 
   /** Playback speeds for the speed menu. */
   playbackRates?: number[];
+
+  /**
+   * Called on a fatal playback error. Most useful on the native Safari path,
+   * where an expired/invalid playback token (403 on the manifest or AES key) only
+   * surfaces as a silent <video> error; use this to prompt a re-auth / retry.
+   */
+  onError?: (error: Error) => void;
 }

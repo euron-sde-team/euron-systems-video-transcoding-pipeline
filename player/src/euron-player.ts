@@ -99,6 +99,23 @@ export class EuronVideoPlayer {
     video.style.height = "100%";
     if (poster) video.poster = poster;
 
+    // Native HLS errors (expired token -> 403 on manifest/key, CORS, unsupported)
+    // otherwise fail silently. Surface them. Registered BEFORE src so early errors fire.
+    video.addEventListener("error", () => {
+      const e = video.error;
+      const byCode: Record<number, string> = {
+        1: "playback aborted",
+        2: "network error (manifest/key/segment fetch failed; often an expired or invalid playback token, or CORS)",
+        3: "decode error",
+        4: "source not supported (the manifest or AES key fetch likely failed: expired token, 403, or CORS)",
+      };
+      const detail = e ? (byCode[e.code] ?? `code ${e.code}`) : "unknown";
+      const msg = `Native HLS playback failed: ${detail}`;
+      // eslint-disable-next-line no-console
+      console.error(`[euron-player] ${msg}`, e?.message ?? "");
+      this.config.onError?.(new Error(msg));
+    });
+
     const url = new URL(hlsAesUrl, window.location.href);
     if (this.config.playbackToken && !url.searchParams.has("token")) {
       url.searchParams.set("token", this.config.playbackToken);
