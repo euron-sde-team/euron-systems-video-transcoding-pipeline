@@ -136,3 +136,29 @@ Also corrected the misleading `-t` comment in `src/encoding/ffmpeg.ts` (kept `-t
   `WORKER_SUBNET_IDS=subnet-0b5f7c3746fa158d5,subnet-0ec2a4406c65c3fa0,subnet-0ceb848970d187a60`,
   same types + `ONDEMAND_FALLBACK=false`. (Dev CreateFleet path not exercised by a real backlog;
   identical code proven in prod. Full dev E2E needs a test upload.)
+
+---
+
+# Safari AES-128 HLS + ABR trim + processed download + captions fix (June 2026, commit eee439c)
+
+Four changes shipped together (see `docs/safari-aes-hls-and-pipeline-improvements.md`):
+- [x] **Safari AES-128 HLS-TS** (`src/encoding/hls-aes.ts`): additive parallel tree, METHOD=AES-128 over
+      MPEG-TS, remuxed `-c copy` from existing rungs, same content key (key file kept OUT of outputDir).
+      Native-Safari captions via an `EXT-X-MEDIA:SUBTITLES` rendition (`X-TIMESTAMP-MAP`, PTS 0).
+- [x] **API token injection** (`hls.controller.ts` + `r2-read.service.ts`): serve + rewrite the AES
+      master/variant per request (token into key+variant URIs, segments→CDN); `no-store`.
+- [x] **Player** (`euron-player.ts`): auto native `<video>` AES path when ClearKey EME absent; Shaka path
+      unchanged. New config `hlsAesUrl`/`playbackMode`.
+- [x] **Ladder trim** to 1080/720/480 (land) / 1080/720/540 (vert); drop 240+360. No-upscale unchanged.
+- [x] **Processed download** (`download-mux.ts`): top rung + audio → faststart MP4 → PRIVATE upload bucket;
+      `GET /videos/:id/download` presigned URL.
+- [x] **Captions root cause** `/opt/whisper.cpp/main` is a deprecation SHIM (exit 0, no vtt) →
+      repointed symlink to `whisper-cli` + forced `-l en` + loud error logging.
+- [x] Build gates green; on-builder synthetic E2E proved every output (AES decrypts 2239/2239 TS-aligned).
+- [x] DEV AMI `ami-0da9c0a1348bb72f4` / **LT v9** default (rollback v8). PROD AMI `ami-0ae32ede6b67c1df5`
+      / **LT v7** default (rollback v6).
+- [ ] **Operator (local API host + Apple device):** `PUBLIC_API_BASE` is an ngrok tunnel to a LOCAL
+      machine, so the AES manifest routes + `/download` only work when the local API runs this build; run
+      a Safari/iOS check (native playback + caption sync) + confirm Chrome cbcs path still plays.
+- [ ] Re-transcode existing videos (reset row to `status='uploaded'`) to populate the new trees.
+- [ ] **Flag for Raushan: ROTATE the pasted dev + prod AWS keys (exposed in transcript).**
