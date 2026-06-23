@@ -3,12 +3,14 @@ import {
   cancelVideo,
   completeUpload,
   createUpload,
+  getDownload,
   getVideo,
   listVideos,
   mintPlaybackToken,
   renameVideo,
   retryVideo,
 } from "../controllers/videos.controller";
+import { getHlsMaster, getHlsVariant } from "../controllers/hls.controller";
 import { getVideoKey } from "../controllers/key.controller";
 import { requirePlaybackToken, requireServiceAuth } from "../middlewares/auth.middleware";
 import { asyncHandler } from "../utils/asynchandler";
@@ -28,8 +30,24 @@ router.post(
   asyncHandler(requireServiceAuth),
   asyncHandler(mintPlaybackToken)
 );
+// Processed downloadable MP4: short-lived presigned URL (private upload bucket).
+router.get("/:id/download", asyncHandler(requireServiceAuth), asyncHandler(getDownload));
 
 // ─── Key delivery (viewer playback token, NOT the service key) ──────────────
 router.get("/:id/key", asyncHandler(requirePlaybackToken), asyncHandler(getVideoKey));
+
+// ─── AES-128 HLS manifests for native Safari (rewritten per request) ────────
+// Master registered before the variant route so "master.m3u8" is never captured
+// as a `:rung`.
+router.get(
+  "/:id/hls/master.m3u8",
+  asyncHandler(requirePlaybackToken),
+  asyncHandler(getHlsMaster)
+);
+router.get(
+  "/:id/hls/:rung/index.m3u8",
+  asyncHandler(requirePlaybackToken),
+  asyncHandler(getHlsVariant)
+);
 
 export default router;

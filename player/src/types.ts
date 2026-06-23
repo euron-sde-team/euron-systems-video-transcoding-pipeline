@@ -3,13 +3,26 @@ import type { WatermarkOptions } from "./watermark";
 export type ManifestType = "hls" | "dash";
 export type PlayerOrientation = "landscape" | "portrait" | "square";
 
+export type PlaybackMode = "auto" | "mse" | "native";
+
 export interface EuronPlayerConfig {
   /** Wrapper element the player + UI + watermark mount into (must be position:relative). */
   container: HTMLElement;
-  /** HLS master.m3u8 or DASH manifest.mpd (CDN URL). */
+  /** HLS master.m3u8 or DASH manifest.mpd (CDN URL). The cbcs/MSE (Shaka) source. */
   manifestUrl: string;
   /** Inferred from the URL extension if omitted. */
   manifestType?: ManifestType;
+  /**
+   * AES-128 HLS-TS master URL (API-served, rewritten per request) for the NATIVE
+   * Safari path. Include `?token=` or pass `playbackToken` to have it appended.
+   * Required only when the player takes the native branch (Safari / no ClearKey EME).
+   */
+  hlsAesUrl?: string;
+  /**
+   * Force a playback path. "auto" (default) uses native AES-128 HLS when ClearKey
+   * EME is unavailable (Safari) and falls back to Shaka/MSE otherwise.
+   */
+  playbackMode?: PlaybackMode;
   orientation?: PlayerOrientation;
   poster?: string;
   /** Scrub-preview WebVTT (thumbnails.vtt), enables hover previews on the seek bar. */
@@ -17,7 +30,7 @@ export interface EuronPlayerConfig {
 
   /** Clear-key delivery. The endpoint returns { clearKeys: { kidHex: keyHex } }. */
   keyEndpoint?: string;
-  /** Short-TTL playback token; sent as `?token=` so it works for the key fetch. */
+  /** Short-TTL playback token; sent as `?token=` so it works for the key + native-HLS fetch. */
   playbackToken?: string;
 
   /** Dynamic identity overlay (NOT burned into media). */

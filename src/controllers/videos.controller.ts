@@ -59,6 +59,17 @@ export const renameVideo = async (req: Request, res: Response) => {
   sendSuccessResponse({ res, data: result, statusCode: HttpSuccessStatus.OK, message: "Video renamed" });
 };
 
+export const getDownload = async (req: Request, res: Response) => {
+  const tenantId = getTenantId(req);
+  const result = await videosService.getProcessedDownloadUrl(tenantId, req.params.id as string);
+  sendSuccessResponse({
+    res,
+    data: result,
+    statusCode: HttpSuccessStatus.OK,
+    message: "Download URL minted",
+  });
+};
+
 export const mintPlaybackToken = async (req: Request, res: Response) => {
   const tenantId = getTenantId(req);
   const userId = String(req.body?.userId ?? "");

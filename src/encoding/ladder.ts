@@ -13,21 +13,20 @@ export interface Rung {
 }
 
 // §13, 16:9 landscape. scale=-2:H (fix height, auto even width).
+// Ladder trimmed to 1080/720/480 (240p + 360p dropped): the low rungs cost storage
+// and egress for little benefit on modern connections. 480 is the floor.
 const LANDSCAPE: Rung[] = [
   { name: "1080", width: 1920, height: 1080, scaleFilter: "scale=-2:1080", videoKbps: 5000, maxrateKbps: 5350, bufsizeKbps: 7500 },
   { name: "720", width: 1280, height: 720, scaleFilter: "scale=-2:720", videoKbps: 3000, maxrateKbps: 3210, bufsizeKbps: 4500 },
   { name: "480", width: 854, height: 480, scaleFilter: "scale=-2:480", videoKbps: 1400, maxrateKbps: 1500, bufsizeKbps: 2100 },
-  { name: "360", width: 640, height: 360, scaleFilter: "scale=-2:360", videoKbps: 800, maxrateKbps: 856, bufsizeKbps: 1200 },
-  { name: "240", width: 426, height: 240, scaleFilter: "scale=-2:240", videoKbps: 350, maxrateKbps: 400, bufsizeKbps: 600 },
 ];
 
 // §13, 9:16 vertical / reels. scale=W:-2 (fix width, auto even height).
+// Trimmed to 1080/720/540 (240 + 360 dropped); 540 is the natural 9:16 mid/floor rung.
 const VERTICAL: Rung[] = [
   { name: "1080", width: 1080, height: 1920, scaleFilter: "scale=1080:-2", videoKbps: 5000, maxrateKbps: 5350, bufsizeKbps: 7500 },
   { name: "720", width: 720, height: 1280, scaleFilter: "scale=720:-2", videoKbps: 3000, maxrateKbps: 3210, bufsizeKbps: 4500 },
   { name: "540", width: 540, height: 960, scaleFilter: "scale=540:-2", videoKbps: 1600, maxrateKbps: 1700, bufsizeKbps: 2400 },
-  { name: "360", width: 360, height: 640, scaleFilter: "scale=360:-2", videoKbps: 800, maxrateKbps: 856, bufsizeKbps: 1200 },
-  { name: "240", width: 240, height: 426, scaleFilter: "scale=240:-2", videoKbps: 350, maxrateKbps: 400, bufsizeKbps: 600 },
 ];
 
 /**

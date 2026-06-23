@@ -9,16 +9,17 @@ const MIME: Record<ManifestType, string> = {
 const DEFAULT_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
 /**
- * YouTube-like player built on the Shaka Player UI library. One class for both
- * 16:9 and 9:16 content, orientation only swaps a CSS data-attribute; the UI
- * itself is responsive (compact control bar when narrow).
+ * YouTube-like player. Two playback paths from ONE config:
+ *  - MSE (Shaka): cbcs CMAF (DASH/HLS) + ClearKey, for Chrome/Firefox/Edge.
+ *  - NATIVE (<video>): AES-128 HLS-TS, for Safari/iOS which lack ClearKey EME
+ *    (they only have FairPlay). Picked automatically when ClearKey EME is absent.
  *
- * Clear-key is fetched from the AUTHENTICATED key endpoint at start and injected
- * via drm.clearKeys. Reminder: clear-key is deterrence, not DRM.
+ * One class for both 16:9 and 9:16 content; orientation only swaps a CSS
+ * data-attribute. Clear-key / AES-128 key delivery is deterrence, not DRM.
  */
 export class EuronVideoPlayer {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private shaka: any;
+  private shaka: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private player: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -26,20 +27,40 @@ export class EuronVideoPlayer {
   private video: HTMLVideoElement | null = null;
   private watermark: Watermark | null = null;
 
-  constructor(private readonly config: EuronPlayerConfig) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    this.shaka = config.shaka ?? (window as any).shaka;
-    if (!this.shaka) {
-      throw new Error("Shaka Player not found. Load shaka-player.ui.js or pass config.shaka.");
-    }
-  }
+  // Shaka is resolved lazily (only the MSE path needs it), so the native Safari
+  // path works on a page that never loaded shaka-player.
+  constructor(private readonly config: EuronPlayerConfig) {}
 
   private inferType(): ManifestType {
     if (this.config.manifestType) return this.config.manifestType;
     return this.config.manifestUrl.includes(".mpd") ? "dash" : "hls";
   }
 
-   
+  /** Native HLS playback (Safari/iOS) is available? */
+  private canPlayNativeHls(): boolean {
+    const v = document.createElement("video");
+    return v.canPlayType("application/vnd.apple.mpegurl") !== "";
+  }
+
+  /** Is W3C ClearKey EME usable (the cbcs/Shaka path's hard requirement)? */
+  private async hasClearKeyEme(): Promise<boolean> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nav = navigator as any;
+    if (typeof nav.requestMediaKeySystemAccess !== "function") return false;
+    try {
+      await nav.requestMediaKeySystemAccess("org.w3.clearkey", [
+        {
+          initDataTypes: ["cenc"],
+          videoCapabilities: [{ contentType: 'video/mp4; codecs="avc1.640028"' }],
+        },
+      ]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+
   private async fetchClearKeys(): Promise<Record<string, string> | null> {
     if (!this.config.keyEndpoint) return null;
     const url = new URL(this.config.keyEndpoint, window.location.href);
@@ -50,7 +71,55 @@ export class EuronVideoPlayer {
     return body.clearKeys ?? null;
   }
 
+  /**
+   * Choose the path. Explicit `playbackMode` wins; otherwise use native AES-128
+   * HLS when ClearKey EME is unavailable (Safari) and a native source exists,
+   * else fall back to the Shaka/MSE cbcs path. No userAgent sniffing.
+   */
   async load(): Promise<void> {
+    const mode = this.config.playbackMode ?? "auto";
+    if (mode === "native") return this.loadNative();
+    if (mode === "mse") return this.loadMse();
+    const emeOk = await this.hasClearKeyEme();
+    if (!emeOk && this.config.hlsAesUrl && this.canPlayNativeHls()) return this.loadNative();
+    return this.loadMse();
+  }
+
+  /** NATIVE Safari/iOS path: AES-128 HLS-TS via a plain <video> (no Shaka, no EME). */
+  private loadNative(): void {
+    const { container, orientation = "landscape", poster, hlsAesUrl } = this.config;
+    if (!hlsAesUrl) throw new Error("hlsAesUrl is required for native playback");
+    container.setAttribute("data-orientation", orientation);
+    if (getComputedStyle(container).position === "static") container.style.position = "relative";
+
+    const video = document.createElement("video");
+    video.setAttribute("playsinline", "");
+    video.controls = true; // native control bar (incl. the CC button for captions)
+    video.style.width = "100%";
+    video.style.height = "100%";
+    if (poster) video.poster = poster;
+
+    const url = new URL(hlsAesUrl, window.location.href);
+    if (this.config.playbackToken && !url.searchParams.has("token")) {
+      url.searchParams.set("token", this.config.playbackToken);
+    }
+    video.src = url.toString();
+    container.appendChild(video);
+    this.video = video;
+
+    if (this.config.watermark) {
+      this.watermark = new Watermark(container, this.config.watermark);
+      this.watermark.start();
+    }
+  }
+
+  /** MSE path: Shaka Player + cbcs CMAF + ClearKey (Chrome/Firefox/Edge). */
+  private async loadMse(): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.shaka = this.config.shaka ?? (window as any).shaka;
+    if (!this.shaka) {
+      throw new Error("Shaka Player not found. Load shaka-player.ui.js or pass config.shaka.");
+    }
     this.shaka.polyfill.installAll();
     if (!this.shaka.Player.isBrowserSupported()) {
       throw new Error("Browser does not support the required media APIs");

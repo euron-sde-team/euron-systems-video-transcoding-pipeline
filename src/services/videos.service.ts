@@ -8,7 +8,7 @@ import { NotFoundError } from "../errors/not-found.error";
 import { TooManyRequestError } from "../errors/too-many-request.error";
 import { UnprocessableError } from "../errors/unprocessable.error";
 import videosRepository, { type VideoRow } from "../repositories/videos.repository";
-import { ALLOWED_UPLOAD_EXT, OUTPUT_FILES } from "../utils/const";
+import { ALLOWED_UPLOAD_EXT, OUTPUT_FILES, processedDownloadKey } from "../utils/const";
 import playbackTokenService from "./playback-token.service";
 import s3UploadService from "./s3-upload.service";
 
@@ -32,10 +32,14 @@ export interface VideoResponse {
   createdAt: string;
   updatedAt: string;
   readyAt: string | null;
-  /** Present only when status='ready'. Absolute CDN URLs. */
+  /** API-relative link to the processed downloadable MP4 (present when ready). */
+  download?: string | null;
+  /** Present only when status='ready'. Absolute CDN URLs (except API-relative keyEndpoint/hlsAes). */
   playback?: {
     hls: string;
     dash: string;
+    /** AES-128 HLS-TS master for the native-Safari path; API-relative, served + rewritten per request. */
+    hlsAes: string;
     poster: string;
     thumbnailsVtt: string;
     keyEndpoint: string;
@@ -76,11 +80,13 @@ function toVideoResponse(row: VideoRow): VideoResponse {
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
     readyAt: row.ready_at ? toIso(row.ready_at) : null,
+    download: isReady ? `/videos/${row.id}/download` : null,
     playback:
       isReady && config.R2_PUBLIC_BASE
         ? {
             hls: cdnUrl(prefix, OUTPUT_FILES.hlsMaster),
             dash: cdnUrl(prefix, OUTPUT_FILES.dashManifest),
+            hlsAes: `/videos/${row.id}/hls/master.m3u8`,
             poster: cdnUrl(prefix, OUTPUT_FILES.poster),
             thumbnailsVtt: cdnUrl(prefix, OUTPUT_FILES.thumbnailsVtt),
             keyEndpoint: `/videos/${row.id}/key`,
@@ -149,6 +155,42 @@ class VideosService {
     const video = await videosRepository.findByIdForTenant(id, tenantId);
     if (!video) throw new NotFoundError("Video not found");
     return toVideoResponse(video);
+  }
+
+  /**
+   * Resolve the R2 output prefix for a READY video. Used by the AES-128 HLS
+   * manifest routes (which fetch + rewrite the stored playlists per request).
+   */
+  async getOutputPrefixForPlayback(tenantId: string, id: string): Promise<string> {
+    const video = await videosRepository.findByIdForTenant(id, tenantId);
+    if (!video) throw new NotFoundError("Video not found");
+    if (video.status !== video_status.ready) throw new NotFoundError("Video not ready");
+    return video.output_prefix ?? `${tenantId}/${id}`;
+  }
+
+  /**
+   * Mint a short-lived presigned URL for the processed downloadable MP4 (the
+   * unencrypted master in the PRIVATE upload bucket). 404 until the worker has
+   * produced it.
+   */
+  async getProcessedDownloadUrl(
+    tenantId: string,
+    id: string
+  ): Promise<{ url: string; expiresIn: number; filename: string }> {
+    const video = await videosRepository.findByIdForTenant(id, tenantId);
+    if (!video) throw new NotFoundError("Video not found");
+    const ttl = 300;
+    const pc = (video.pipeline_config ?? {}) as { title?: string };
+    const base =
+      typeof pc.title === "string" && pc.title.trim() ? pc.title.trim() : `video-${id.slice(0, 8)}`;
+    const filename = `${base.replace(/[^\w.-]+/g, "_")}.mp4`;
+    const url = await s3UploadService.getPresignedDownloadUrl(
+      processedDownloadKey(tenantId, id),
+      ttl,
+      filename
+    );
+    if (!url) throw new NotFoundError("Processed download not available yet");
+    return { url, expiresIn: ttl, filename };
   }
 
   async listVideos(

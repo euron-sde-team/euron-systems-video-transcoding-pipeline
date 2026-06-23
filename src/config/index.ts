@@ -113,6 +113,9 @@ const config = {
   HEARTBEAT_MS: Number(process.env.HEARTBEAT_MS ?? "30000"),
   WHISPER_BIN: process.env.WHISPER_BIN ?? "/opt/whisper.cpp/main",
   WHISPER_MODEL: process.env.WHISPER_MODEL ?? "/opt/models/ggml-small.bin",
+  // Default caption language passed to whisper when a video does not specify one.
+  // English by default so transcription is deterministic (no auto-detect surprises).
+  CAPTIONS_DEFAULT_LANG: process.env.CAPTIONS_DEFAULT_LANG ?? "en",
   FFMPEG_BIN: process.env.FFMPEG_BIN ?? "ffmpeg",
   FFPROBE_BIN: process.env.FFPROBE_BIN ?? "ffprobe",
   SHAKA_PACKAGER_BIN: process.env.SHAKA_PACKAGER_BIN ?? "packager",

@@ -3,13 +3,16 @@ import path from "path";
 import config from "../config";
 import { setOrientation, type VideoRow } from "../db/queue";
 import { generateCaptions } from "../encoding/captions";
+import { muxProcessedDownload } from "../encoding/download-mux";
 import { transcode } from "../encoding/ffmpeg";
+import { packageHlsAes } from "../encoding/hls-aes";
 import { selectLadder } from "../encoding/ladder";
 import { probe } from "../encoding/probe";
 import { packageCmaf } from "../encoding/shaka";
 import { generateThumbnails } from "../encoding/thumbnails";
 import contentKeyService from "../services/content-key.service";
 import s3UploadService from "../services/s3-upload.service";
+import { HLS_AES_KEY_URI_PLACEHOLDER, processedDownloadKey } from "../utils/const";
 import logger from "../utils/logger";
 import type { Heartbeat } from "./heartbeat";
 import { uploadOutputTree } from "./r2";
@@ -20,6 +23,8 @@ export interface PipelineOutcome {
 
 interface PipelineConfig {
   captions?: boolean;
+  /** Force a caption language (whisper `-l`); defaults to config.CAPTIONS_DEFAULT_LANG ("en"). */
+  captionsLang?: string;
 }
 
 /**
@@ -81,7 +86,8 @@ export const transcodePipeline = async (
     let captions: { vttFile: string; lang: string } | null = null;
     if (cfg.captions !== false) {
       await hb.update("transcribing", 66);
-      captions = await generateCaptions(inputPath, renditionsDir, probed.hasAudio);
+      const captionsLang = cfg.captionsLang ?? config.CAPTIONS_DEFAULT_LANG;
+      captions = await generateCaptions(inputPath, renditionsDir, probed.hasAudio, captionsLang);
     }
 
     // ── 4. packaging (generate + store key, then CMAF cbcs + dual manifest) ──
@@ -91,7 +97,38 @@ export const transcodePipeline = async (
       ? `${config.PUBLIC_API_BASE.replace(/\/+$/, "")}/api/v1/videos/${video.id}/key?format=raw`
       : undefined;
     await packageCmaf({ outputDir, videoFiles, audioFile, captions, key, hlsKeyUri });
+    await hb.update("packaging", 82);
+
+    // ── 4b. AES-128 HLS-TS tree (Safari native path), same content key ──
+    // Shaka can't emit METHOD=AES-128 and cbcs needs FairPlay on Apple, so this
+    // parallel TS tree (remuxed, no re-encode) is what Safari/iOS play natively.
+    await packageHlsAes({
+      outputDir,
+      videoFiles,
+      audioFile,
+      key: { keyBytes: key.keyBytes },
+      keyUriPlaceholder: HLS_AES_KEY_URI_PLACEHOLDER,
+      workDir: renditionsDir,
+      captions,
+      durationSec: probed.durationSec,
+    });
     await hb.update("packaging", 85);
+
+    // ── 4c. processed downloadable MP4 → PRIVATE upload bucket (non-fatal) ──
+    try {
+      const processed = await muxProcessedDownload(videoFiles, audioFile, renditionsDir);
+      if (processed) {
+        await s3UploadService.uploadFile(
+          processedDownloadKey(video.tenant_id, video.id),
+          processed,
+          "video/mp4"
+        );
+      }
+    } catch (err) {
+      logger.error(
+        `[pipeline ${video.id}] processed download failed (non-fatal): ${(err as Error).message}`
+      );
+    }
 
     // ── 5. uploading_output → R2 ──
     await hb.update("uploading_output", 90);

@@ -1,8 +1,15 @@
-import { createWriteStream } from "fs";
+import { createReadStream, createWriteStream } from "fs";
+import { stat } from "fs/promises";
 import { pipeline } from "stream/promises";
 import type { Readable } from "stream";
-import { GetObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { createPresignedPost, type PresignedPost } from "@aws-sdk/s3-presigned-post";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import config from "../config";
 
 /**
@@ -52,6 +59,49 @@ class S3UploadService {
     );
     if (!out.Body) throw new Error(`S3 object ${key} has no body`);
     await pipeline(out.Body as Readable, createWriteStream(destPath));
+  }
+
+  /**
+   * Worker: upload a local file into the (private) upload bucket. Used for the
+   * processed downloadable MP4, which is the unencrypted master and therefore must
+   * NOT live on the public R2 CDN, it stays in this private bucket behind a
+   * service-authed presigned GET.
+   */
+  async uploadFile(key: string, filePath: string, contentType: string): Promise<void> {
+    const size = (await stat(filePath)).size;
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: config.UPLOAD_BUCKET,
+        Key: key,
+        Body: createReadStream(filePath),
+        ContentLength: size,
+        ContentType: contentType,
+      })
+    );
+  }
+
+  /**
+   * API: mint a short-lived presigned GET URL for a private upload-bucket object,
+   * or null if it does not exist. `downloadName` sets a friendly Content-Disposition
+   * filename for the browser's "Save as".
+   */
+  async getPresignedDownloadUrl(
+    key: string,
+    ttlSeconds: number,
+    downloadName?: string
+  ): Promise<string | null> {
+    if ((await this.getUploadedSize(key)) === null) return null;
+    return getSignedUrl(
+      this.client,
+      new GetObjectCommand({
+        Bucket: config.UPLOAD_BUCKET,
+        Key: key,
+        ...(downloadName
+          ? { ResponseContentDisposition: `attachment; filename="${downloadName}"` }
+          : {}),
+      }),
+      { expiresIn: ttlSeconds }
+    );
   }
 }
 

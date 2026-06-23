@@ -21,6 +21,7 @@ const contentTypeFor = (file: string): string => {
   if (file.endsWith(".m3u8")) return "application/vnd.apple.mpegurl";
   if (file.endsWith(".mpd")) return "application/dash+xml";
   if (file.endsWith(".m4s")) return "video/iso.segment";
+  if (file.endsWith(".ts")) return "video/mp2t"; // AES-128 HLS-TS segments (Safari path)
   if (file.endsWith(".mp4")) return "video/mp4";
   if (file.endsWith(".vtt")) return "text/vtt";
   if (file.endsWith(".jpg") || file.endsWith(".jpeg")) return "image/jpeg";
@@ -40,7 +41,10 @@ async function walk(dir: string): Promise<string[]> {
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) out.push(...(await walk(full)));
-    else out.push(full);
+    // Defensive: never ship a raw AES key file even if one lands under outputDir.
+    // (The HLS-AES key file lives in the temp renditions dir, not here, but this
+    // guarantees a content key can never leak to the public CDN.)
+    else if (!entry.name.endsWith(".key")) out.push(full);
   }
   return out;
 }
