@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Orientation } from "../../types/api";
 import { ControlBar } from "./ControlBar";
 import {
@@ -9,11 +9,13 @@ import {
   ReplayOverlay,
   Spinner,
 } from "./PlayerOverlays";
+import { canPlayNativeHls, useNativeHls, useNativeTextTracks } from "./useNativeHls";
 import { useControlsAutoHide } from "./useControlsAutoHide";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 import { usePlaybackState } from "./usePlaybackState";
 import { usePlayerTracks } from "./usePlayerTracks";
 import { type PlayerSource, useShakaPlayer } from "./useShakaPlayer";
+import { useVttThumbnails } from "./useVttThumbnails";
 import { Watermark } from "./Watermark";
 
 const ORIENTATION_CLASS: Record<Orientation, string> = {
@@ -41,9 +43,45 @@ export function VideoPlayer({
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  const { player, isBuffering, error, thumbnailTrackId, retry } = useShakaPlayer(videoRef, source);
+  // Pick the playback path off NATIVE-HLS support, not a ClearKey-EME probe.
+  // Safari/iOS play native HLS (so use the AES-128 source there); Chrome/Firefox/
+  // Edge/Android can't play native HLS, so they fall through to Shaka/cbcs. Probing
+  // ClearKey EME is unreliable: some Safari builds resolve the probe yet still can't
+  // actually play cbcs+ClearKey, which wrongly routes them to Shaka (one frame, then
+  // a stall). `canPlayType('application/vnd.apple.mpegurl')` is the canonical signal.
+  const goNative = useMemo(
+    () => canPlayNativeHls() && Boolean(source.nativeHlsUrl),
+    [source.nativeHlsUrl]
+  );
+
+  const {
+    player,
+    isBuffering: shakaBuffering,
+    error: shakaError,
+    thumbnailTrackId,
+    retry: shakaRetry,
+  } = useShakaPlayer(videoRef, goNative ? null : source);
+  const native = useNativeHls(videoRef, goNative ? (source.nativeHlsUrl ?? null) : null);
+  const nativeCaptions = useNativeTextTracks(videoRef, goNative);
+  // Scrub thumbnails on the native path: Shaka's getThumbnails() is unavailable
+  // (no Shaka player), so parse the same thumbnails.vtt client-side. Disabled
+  // (null) on the Shaka path, which already sources tiles from getThumbnails().
+  const vttTiles = useVttThumbnails(goNative ? (source.thumbnailsVttUrl ?? null) : null);
+
+  const error = goNative ? native.error : shakaError;
+  const isBuffering = goNative ? native.isBuffering : shakaBuffering;
+
+  const retry = useCallback(() => {
+    if (goNative) videoRef.current?.load();
+    else shakaRetry();
+  }, [goNative, shakaRetry]);
+
   const state = usePlaybackState(videoRef);
   const { textTracks, textVisible } = usePlayerTracks(player);
+
+  // Captions: native textTracks on the Safari path, Shaka tracks otherwise.
+  const captionsAvailable = goNative ? nativeCaptions.available : textTracks.length > 0;
+  const captionsOn = goNative ? nativeCaptions.on : textVisible;
 
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -96,11 +134,21 @@ export function VideoPlayer({
     }
   }, [player, showOsd]);
 
+  // Captions toggle that targets whichever path is active.
+  const onToggleCaptions = useCallback(() => {
+    if (goNative) {
+      showOsd(nativeCaptions.on ? "Subtitles off" : "Subtitles on");
+      nativeCaptions.toggle();
+    } else {
+      toggleCaptions();
+    }
+  }, [goNative, nativeCaptions, toggleCaptions, showOsd]);
+
   useKeyboardShortcuts({
     videoRef,
-    enabled: Boolean(player),
+    enabled: Boolean(player) || goNative,
     onToggleFullscreen: toggleFullscreen,
-    onToggleCaptions: toggleCaptions,
+    onToggleCaptions,
     showOsd,
   });
 
@@ -211,11 +259,12 @@ export function VideoPlayer({
             player={player}
             state={state}
             thumbnailTrackId={thumbnailTrackId}
+            vttTiles={vttTiles}
             playbackRate={playbackRate}
             onPlaybackRateChange={setPlaybackRate}
-            captionsAvailable={textTracks.length > 0}
-            captionsOn={textVisible}
-            onToggleCaptions={toggleCaptions}
+            captionsAvailable={captionsAvailable}
+            captionsOn={captionsOn}
+            onToggleCaptions={onToggleCaptions}
             isFullscreen={isFullscreen}
             onToggleFullscreen={toggleFullscreen}
             onScrubChange={setScrubbing}

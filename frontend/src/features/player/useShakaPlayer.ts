@@ -17,6 +17,12 @@ export interface PlayerSource {
   /** Absolute key URL incl. ?token=...; omit for unencrypted assets. */
   keyUrl?: string;
   thumbnailsVttUrl?: string;
+  /**
+   * Absolute AES-128 HLS master URL (incl. ?token=) for the native Safari path.
+   * When present and ClearKey EME is unavailable, the player uses native <video>
+   * instead of Shaka. Omit to force the Shaka/cbcs path.
+   */
+  nativeHlsUrl?: string;
 }
 
 interface UseShakaPlayerResult {

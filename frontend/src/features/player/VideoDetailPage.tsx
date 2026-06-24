@@ -99,6 +99,12 @@ function ReadyPlayer({ video }: { video: VideoResponse }) {
     needsKey && token
       ? `${apiUrl(playback.keyEndpoint)}?token=${encodeURIComponent(token)}`
       : undefined;
+  // Native Safari source (AES-128 HLS). Needs the token in the URL (native HLS
+  // can't send headers); the player only uses it when ClearKey EME is absent.
+  const nativeHlsUrl =
+    token && playback.hlsAes
+      ? `${apiUrl(playback.hlsAes)}?token=${encodeURIComponent(token)}`
+      : undefined;
 
   if (needsKey && !token) {
     return (
@@ -126,6 +132,7 @@ function ReadyPlayer({ video }: { video: VideoResponse }) {
         manifestUrl: settings.streamFormat === "dash" ? playback.dash : playback.hls,
         keyUrl,
         thumbnailsVttUrl: playback.thumbnailsVtt,
+        nativeHlsUrl,
       }}
       poster={playback.poster}
       orientation={video.orientation ?? "landscape"}

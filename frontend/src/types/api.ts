@@ -22,10 +22,15 @@ export type StreamFormat = "hls" | "dash";
 export type WatermarkMode = "none" | "dynamic_overlay" | "forensic_ab";
 
 export interface PlaybackInfo {
-  /** Absolute CDN URL to the HLS master playlist. */
+  /** Absolute CDN URL to the HLS master playlist (cbcs/MSE). */
   hls: string;
-  /** Absolute CDN URL to the DASH manifest. */
+  /** Absolute CDN URL to the DASH manifest (cbcs/MSE). */
   dash: string;
+  /**
+   * RELATIVE AES-128 HLS master path ("/videos/:id/hls/master.m3u8") for native
+   * Safari/iOS. The player builds the absolute URL and appends ?token=.
+   */
+  hlsAes: string;
   /** Absolute CDN URL to the poster image. */
   poster: string;
   /** Absolute CDN URL to the WebVTT sprite thumbnails. */
@@ -52,6 +57,8 @@ export interface VideoResponse {
   createdAt: string;
   updatedAt: string;
   readyAt: string | null;
+  /** API-relative link to the processed downloadable MP4 ("/videos/:id/download"). */
+  download?: string | null;
   playback?: PlaybackInfo | null;
 }
 

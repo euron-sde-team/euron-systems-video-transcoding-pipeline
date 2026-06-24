@@ -35,12 +35,12 @@ export function Watermark({
 
   return (
     <div
-      className="pointer-events-none absolute z-30 select-none whitespace-nowrap text-white"
+      className="pointer-events-none absolute z-30 select-none whitespace-nowrap text-red-500"
       style={{
         top: `${pos.top}%`,
         left: `${pos.left}%`,
         opacity,
-        fontSize: "clamp(10px, 1.6vw, 14px)",
+        fontSize: "clamp(15px, 2.4vw, 21px)",
         textShadow: "0 1px 3px rgba(0,0,0,0.8)",
         transition: "top 0.6s ease, left 0.6s ease",
       }}

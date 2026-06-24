@@ -36,30 +36,21 @@ export class EuronVideoPlayer {
     return this.config.manifestUrl.includes(".mpd") ? "dash" : "hls";
   }
 
-  /** Native HLS playback (Safari/iOS) is available? */
+  /**
+   * Should this browser use the native HLS path? True only on Apple WebKit
+   * (Safari macOS + iOS WebKit browsers), where Shaka's ClearKey/MSE path can't
+   * work. Chrome/Firefox/Edge/Android keep the Shaka path (and its caption +
+   * thumbnail tracks). Gated on Apple WebKit, not a bare capability probe, because
+   * `canPlayType` is non-empty on some Chrome builds (would route Chrome to native)
+   * and ClearKey-EME probes resolve on Safari (would route Safari to Shaka).
+   */
   private canPlayNativeHls(): boolean {
+    const ua = navigator.userAgent;
+    const appleWebKit = /AppleWebKit/.test(ua) && !/Chrome|Chromium|Android/i.test(ua);
+    if (!appleWebKit) return false;
     const v = document.createElement("video");
     return v.canPlayType("application/vnd.apple.mpegurl") !== "";
   }
-
-  /** Is W3C ClearKey EME usable (the cbcs/Shaka path's hard requirement)? */
-  private async hasClearKeyEme(): Promise<boolean> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const nav = navigator as any;
-    if (typeof nav.requestMediaKeySystemAccess !== "function") return false;
-    try {
-      await nav.requestMediaKeySystemAccess("org.w3.clearkey", [
-        {
-          initDataTypes: ["cenc"],
-          videoCapabilities: [{ contentType: 'video/mp4; codecs="avc1.640028"' }],
-        },
-      ]);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
 
   private async fetchClearKeys(): Promise<Record<string, string> | null> {
     if (!this.config.keyEndpoint) return null;
@@ -73,15 +64,16 @@ export class EuronVideoPlayer {
 
   /**
    * Choose the path. Explicit `playbackMode` wins; otherwise use native AES-128
-   * HLS when ClearKey EME is unavailable (Safari) and a native source exists,
-   * else fall back to the Shaka/MSE cbcs path. No userAgent sniffing.
+   * HLS whenever the browser supports native HLS (Safari/iOS) and an AES source is
+   * configured, else fall back to the Shaka/MSE cbcs path. We key off native-HLS
+   * support, not a ClearKey-EME probe: some Safari builds resolve that probe yet
+   * still cannot play cbcs+ClearKey, which would wrongly pick Shaka. No UA sniffing.
    */
   async load(): Promise<void> {
     const mode = this.config.playbackMode ?? "auto";
     if (mode === "native") return this.loadNative();
     if (mode === "mse") return this.loadMse();
-    const emeOk = await this.hasClearKeyEme();
-    if (!emeOk && this.config.hlsAesUrl && this.canPlayNativeHls()) return this.loadNative();
+    if (this.canPlayNativeHls() && this.config.hlsAesUrl) return this.loadNative();
     return this.loadMse();
   }
 

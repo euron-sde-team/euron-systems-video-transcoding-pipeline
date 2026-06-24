@@ -12,6 +12,7 @@ import { SeekBar } from "./SeekBar";
 import { SettingsMenu } from "./SettingsMenu";
 import type { PlaybackState } from "./usePlaybackState";
 import type { ShakaPlayer } from "./useShakaPlayer";
+import type { ThumbTile } from "./useVttThumbnails";
 import { VolumeControl } from "./VolumeControl";
 
 interface Props {
@@ -19,6 +20,8 @@ interface Props {
   player: ShakaPlayer | null;
   state: PlaybackState;
   thumbnailTrackId: number | null;
+  /** Native-path (Safari/iOS) thumbnail tiles, parsed from thumbnails.vtt. */
+  vttTiles: ThumbTile[] | null;
   playbackRate: number;
   onPlaybackRateChange: (rate: number) => void;
   captionsAvailable: boolean;
@@ -34,6 +37,7 @@ export function ControlBar({
   player,
   state,
   thumbnailTrackId,
+  vttTiles,
   playbackRate,
   onPlaybackRateChange,
   captionsAvailable,
@@ -72,6 +76,7 @@ export function ControlBar({
         buffered={state.buffered}
         player={player}
         thumbnailTrackId={thumbnailTrackId}
+        vttTiles={vttTiles}
         onSeek={(t) => {
           if (video) video.currentTime = t;
         }}

@@ -30,7 +30,12 @@ const DEFAULTS: AppSettings = {
   serviceKey: "",
   tenantId: "",
   previewUserId: "admin-preview",
-  streamFormat: "hls",
+  // DASH, not HLS: on the Shaka/cbcs path (Chrome/Firefox), Shaka reliably exposes
+  // the DASH text AdaptationSet as a caption track, but it does NOT surface the cbcs
+  // HLS EXT-X-MEDIA:SUBTITLES rendition (a known Shaka HLS limitation), so HLS loses
+  // the CC button. Both carry the same captions; DASH is also the canonical static-MPD
+  // manifest. Safari is unaffected (it uses the native AES-128 HLS path, not this).
+  streamFormat: "dash",
 };
 
 type Listener = (settings: AppSettings) => void;
