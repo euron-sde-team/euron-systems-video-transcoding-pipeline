@@ -1,10 +1,10 @@
 import { sql, type Selectable } from "kysely";
 import { db } from "./connection";
-import { COUNT_OUTSTANDING_SQL, REAP_SQL } from "./queue-sql";
+import { COUNT_QUEUE_SQL, REAP_SQL } from "./queue-sql";
 import type { videos } from "./types";
 
 // Re-export so existing importers of db/queue keep working.
-export { COUNT_OUTSTANDING_SQL, REAP_SQL };
+export { COUNT_QUEUE_SQL, REAP_SQL };
 
 // Query RESULTS use Selectable, strips Kysely's Generated/ColumnType brands so
 // fields read as plain string/number/Date.

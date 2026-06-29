@@ -1,14 +1,15 @@
 import { Client } from "pg";
 import config from "../config";
-import { COUNT_OUTSTANDING_SQL, REAP_SQL } from "../db/queue-sql";
+import { COUNT_QUEUE_SQL, REAP_SQL } from "../db/queue-sql";
 import logger from "../utils/logger";
 import { countRunningWorkers, launchWorkers } from "./ec2";
 
 export interface OrchestratorResult {
   reaped: number;
-  outstanding: number;
+  queued: number;
+  inProgress: number;
   running: number;
-  desired: number;
+  spare: number;
   toLaunch: number;
 }
 
@@ -29,15 +30,24 @@ const getClient = (): Client => {
 };
 
 /**
- * EventBridge cron (every 1 min). The "brain": reap dead jobs, then scale UP only.
- *   outstanding = count(status IN ('uploaded','processing'))      // work that needs a worker
- *   desired     = min(MAX_WORKERS, ceil(outstanding / DIVISOR))   // DIVISOR = videos per worker
- *   toLaunch    = max(0, desired - running)
- * `outstanding` counts in-flight jobs so it shares units with `running` (all
- * workers, busy ones included); that stops a busy worker from being double-
- * subtracted from `desired`. With DIVISOR=1 this is one worker per outstanding
- * video, capped by MAX_WORKERS. Never terminates instances, workers self-terminate
- * on an empty queue.
+ * EventBridge cron (every 1 min). Reap dead jobs, then scale UP only.
+ *
+ * Launch workers ONLY for the UNCLAIMED queue, crediting workers that are free to
+ * take it (idle + still-booting):
+ *   need     = ceil(queued / DIVISOR)                  // workers wanted for 'uploaded' videos
+ *   spare    = max(0, running - inProgress)            // workers not on a job
+ *   toLaunch = max(0, min(need - spare, MAX_WORKERS - running))
+ *
+ * Why 'processing' is NOT in the numerator: a processing video ALREADY has a worker,
+ * so feeding it into the launch count (and subtracting all `running`) double-counts
+ * and over-launches whenever `running` momentarily undercounts that worker, which it
+ * does for ordinary reasons (the worker is still booting, its role tag is not yet
+ * visible to DescribeInstances, or it was Spot-reclaimed before its job got reaped).
+ * Provisioning off the queue and subtracting only SPARE workers is immune both ways:
+ * an uncounted busy worker cannot inflate the launch (spare clamps at 0), and a busy
+ * worker cannot suppress a needed launch (it is excluded from spare). With DIVISOR=1
+ * this is one worker per queued video, capped by MAX_WORKERS. Never terminates
+ * instances, workers self-terminate on an empty queue.
  */
 export const handler = async (): Promise<OrchestratorResult> => {
   const db = getClient();
@@ -46,21 +56,24 @@ export const handler = async (): Promise<OrchestratorResult> => {
     const reapRes = await db.query(REAP_SQL);
     const reaped = reapRes.rowCount ?? 0;
 
-    const countRes = await db.query<{ n: number }>(COUNT_OUTSTANDING_SQL);
-    const outstanding = countRes.rows[0]?.n ?? 0;
+    const countRes = await db.query<{ queued: number; in_progress: number }>(COUNT_QUEUE_SQL);
+    const queued = countRes.rows[0]?.queued ?? 0;
+    const inProgress = countRes.rows[0]?.in_progress ?? 0;
 
     const running = await countRunningWorkers();
-    const desired = Math.min(config.MAX_WORKERS, Math.ceil(outstanding / config.DIVISOR));
-    const toLaunch = Math.max(0, desired - running);
+    const spare = Math.max(0, running - inProgress);
+    const need = Math.ceil(queued / config.DIVISOR);
+    const headroom = Math.max(0, config.MAX_WORKERS - running);
+    const toLaunch = Math.max(0, Math.min(need - spare, headroom));
 
     logger.info(
-      `[orchestrator] reaped=${reaped} outstanding=${outstanding} running=${running} ` +
-        `desired=${desired} toLaunch=${toLaunch}`
+      `[orchestrator] reaped=${reaped} queued=${queued} processing=${inProgress} ` +
+        `running=${running} spare=${spare} need=${need} toLaunch=${toLaunch}`
     );
 
     if (toLaunch > 0) await launchWorkers(toLaunch);
 
-    return { reaped, outstanding, running, desired, toLaunch };
+    return { reaped, queued, inProgress, running, spare, toLaunch };
   } finally {
     await db.end();
   }

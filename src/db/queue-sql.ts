@@ -1,7 +1,7 @@
 // Raw queue SQL as plain strings. NO imports, so the Lambda orchestrator can
-// reuse REAP_SQL/COUNT_OUTSTANDING_SQL with its own per-invocation pg client
-// WITHOUT pulling in db/connection's module-scope pool (Lambda connection
-// hygiene, constraint #12).
+// reuse REAP_SQL/COUNT_QUEUE_SQL with its own per-invocation pg client WITHOUT
+// pulling in db/connection's module-scope pool (Lambda connection hygiene,
+// constraint #12).
 
 /** Reclaim dead/stuck 'processing' jobs; give up past max_attempts. */
 export const REAP_SQL = `
@@ -15,13 +15,21 @@ export const REAP_SQL = `
 `;
 
 /**
- * Outstanding work = the scale-up signal. Counts videos that still need a worker
- * slot: 'uploaded' (waiting for one) + 'processing' (already have one). Counting
- * BOTH keeps this numerator in the SAME unit as `running` (all workers, busy ones
- * included), so a busy worker is not double-subtracted from `desired`. Scaling on
- * 'uploaded' alone undercounted: a claimed job leaves the queue while its worker
- * still counts as running, so each busy worker suppressed DIVISOR items before the
- * next launch (supersedes the old 'uploaded'-only signal).
+ * The two work buckets the scale-up controller needs, in ONE round trip:
+ *   queued      = 'uploaded'   -> unclaimed, still needs a worker
+ *   in_progress = 'processing' -> already claimed (each already has/had a worker)
+ *
+ * The controller launches for `queued` ONLY, offset by SPARE workers
+ * (running - in_progress). Counting 'processing' INTO the launch numerator (the
+ * earlier COUNT_OUTSTANDING approach) double-counts against `running` and over-
+ * launches whenever a busy worker is momentarily uncounted (still booting, its role
+ * tag not yet visible to DescribeInstances, or Spot-reclaimed before its job is
+ * reaped). Provisioning off the queue is immune to that. See orchestrator/index.ts.
  */
-export const COUNT_OUTSTANDING_SQL =
-  "SELECT count(*)::int AS n FROM videos WHERE status IN ('uploaded','processing')";
+export const COUNT_QUEUE_SQL = `
+  SELECT
+    count(*) FILTER (WHERE status = 'uploaded')::int   AS queued,
+    count(*) FILTER (WHERE status = 'processing')::int AS in_progress
+  FROM videos
+  WHERE status IN ('uploaded', 'processing')
+`;
