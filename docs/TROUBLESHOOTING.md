@@ -59,21 +59,30 @@ service policy); a CMK needs explicit `kms:Decrypt` (the `<SSM_KMS_KEY_ARN>` sta
 **Fix:** ensure `worker-policy.json`'s `DecryptSecureStrings` resource matches the key used to create
 the params.
 
-### A re-baked PROD worker AMI never claims, but the SAME build worked on the dev builder
-**What happened:** a new prod worker AMI's instances launched, never claimed (video `uploaded`,
-`attempts=0`, no `euron-vod-primary-*` session in the prod RDS), and self-terminated ~60s — while the
-exact same `/opt/euron-vod` build ran fine when smoke-tested on the dev builder. The prod-native old
-AMI worked, so it was the AMI, not the code (`db/connection.ts` unchanged).
-**Why the smoke test lied:** the dev builder reaches the **dev** RDS (same VPC, direct); a prod worker
-must reach the **prod** RDS over **cross-VPC peering**. `node dist/worker/index.js` on the builder
-proves the build *runs* and connects to the *dev* DB — it canNOT detect a prod-RDS-over-peering
-failure. (The exact mechanism of that specific prod-connection failure was never captured: prod
-workers have an egress-only SG, no SSH key, no CloudWatch log group, and empty console output.)
-**Practice:** after any prod worker re-bake, do NOT trust "the build is present." VALIDATE a real prod
-worker actually CLAIMS a job before relying on it — upload a test clip and confirm `videos.attempts > 0`
-(it moved to `processing`), or a `euron-vod-primary-*` row appears in the prod RDS `pg_stat_activity`,
-or the orchestrator logs `backlog` drop to 0. Keep the previous good AMI and roll back via a new
-`$Latest` version (see the launch-template section) if the new one doesn't claim.
+### A re-baked worker AMI never claims, but the SAME build worked on the dev builder  (ROOT CAUSE: 0-byte `dist`)
+**What happened (twice — HLS-only deploy, then the download-feature deploy):** a new worker AMI's
+instances launched, never claimed (video stays `uploaded`), and self-terminated in ~20-40s — while the
+exact same `/opt/euron-vod` build ran fine when smoke-tested on the dev builder. It *looked* like a
+prod-RDS connectivity problem (and was misdiagnosed as cross-VPC peering once), but it was NOT.
+**Real root cause (CONFIRMED):** the re-bake did `rsync … dist /opt/euron-vod/` then `create-image
+--no-reboot` with **no `sync` in between**. `--no-reboot` snapshots the EBS block device WITHOUT
+flushing the OS page cache; with ext4 delayed allocation, the just-rsynced files were captured as
+**0-byte files** (inode + name + timestamp present, data still in cache). Every `.js` in the baked
+AMI's `dist` was empty (`md5 == d41d8cd98f00b204e9800998ecf8427e`), so the worker ran an empty
+`dist/worker/index.js`, did nothing, and self-terminated — never reaching even the first log line.
+The dev-builder smoke test passed because the builder's own page cache + disk had the real files.
+**Fix:** `sync; sync; sleep 2; sync` on the builder AFTER the rsync and BEFORE `create-image`, and
+verify `sudo find /opt/euron-vod/dist -name '*.js' -size 0` prints nothing. (Or drop `--no-reboot` so
+the snapshot reboots and flushes.) See `infra/ami-build.md` §8.
+**How to read a suspected-bad AMI's worker (prod workers have no SSH/SSM/CloudWatch):** launch the AMI
+yourself into a worker subnet (it has both an IGW route AND the `172.30.0.0/16 → pcx-…` RDS-peering
+route) with `--key-name es-test-vm-key`, security groups `[<worker-sg>, sg-0125707b… (SSH)]`,
+`--iam-instance-profile euron-vod-worker-prod-role`, and **no UserData** (boots idle instead of
+auto-running+terminating). SSH in and check `wc -c /opt/euron-vod/dist/worker/*.js` (0 = bad bake) and
+run `node dist/worker/index.js` by hand to watch the real cross-account RDS handshake.
+**Always also:** after any prod re-bake, VALIDATE a real worker CLAIMS a job (upload a test clip,
+confirm it moves to `processing`) before relying on the AMI. Keep the previous good AMI and roll back
+via a new `$Latest` version (see the launch-template section) if the new one doesn't claim.
 
 ---
 
@@ -238,6 +247,9 @@ ffmpeg/packager/whisper):
    -a --delete dist /opt/euron-vod/ && sudo rm -f /opt/euron-vod/.env`.
 3. Verify the fix landed: `grep -c temp_dir /opt/euron-vod/dist/encoding/shaka.js` (etc.), and the
    binary supports flags you rely on: `packager --help | grep -i temp_dir`.
+3b. **⛔ NON-NEGOTIABLE: flush to disk before imaging** — `sync; sync; sleep 2; sync`, then confirm
+   `sudo find /opt/euron-vod/dist -name '*.js' -size 0` prints NOTHING. Skipping this ships a 0-byte
+   `dist` (see "0-byte `dist`" root-cause entry above) and the AMI's workers never claim.
 4. `aws ec2 create-image --instance-id <builder> --no-reboot --name euron-vod-worker-$(date +%Y%m%d)`.
 5. Point the template at it (keeps UserData): `aws ec2 create-launch-template-version
    --launch-template-id <id> --source-version '$Latest' --launch-template-data '{"ImageId":"<new-ami>"}'`,

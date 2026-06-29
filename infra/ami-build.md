@@ -94,6 +94,23 @@ packager --version
 ```
 
 ## 8. Create the image
+
+> ⛔ **CRITICAL: run `sync` on the builder BEFORE `create-image --no-reboot`.**
+> `--no-reboot` snapshots the EBS block device WITHOUT flushing the OS page cache.
+> ext4 uses delayed allocation, so files you just `rsync`ed into `/opt/euron-vod/dist`
+> may exist as inodes (correct name + timestamp) but with their DATA still in the page
+> cache, not on the block device. The snapshot then captures them as **0-byte files**.
+> The worker on instances from that AMI runs an EMPTY `dist/worker/index.js`, does
+> nothing, terminates, and NEVER CLAIMS a job. (This silently broke prod twice; the
+> symptom is "workers launch + die in ~20-40s, jobs stay `uploaded`" and looks exactly
+> like a DB-connectivity failure.) Flush first, and verify no zero-byte files:
+```
+# on the builder, AFTER rsync into /opt/euron-vod:
+sync; sync; sleep 2; sync
+sudo find /opt/euron-vod/dist -name '*.js' -size 0   # MUST print nothing
+```
+Then create the image (the `sync` above makes `--no-reboot` safe; omitting `--no-reboot`
+also works because the reboot flushes the cache, but it is slower):
 ```
 aws ec2 create-image --region ap-south-1 --instance-id <BUILDER_INSTANCE_ID> \
   --name euron-vod-worker-$(date +%Y%m%d) --no-reboot \

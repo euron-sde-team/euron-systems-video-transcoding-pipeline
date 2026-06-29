@@ -61,7 +61,19 @@ already (committed + working). See `docs/PLAYBACK-SECURITY.md`.
    role has no SSM, so Session Manager / send-command don't work. SG `sg-0099bff1ff1b348e4` allows SSH.
    Re-bake fast path: start builder → SSH → `git fetch + reset --hard origin/main` → `pnpm install` →
    `npx prisma generate` → `pnpm build` → `sudo rsync -a --delete dist /opt/euron-vod/` → `rm` any
-   `/opt/euron-vod/.env` → `create-image --no-reboot` → new LT version → stop builder.
+   `/opt/euron-vod/.env` → **`sync; sync; sleep 2; sync`** (see gotcha #6, NON-NEGOTIABLE) →
+   verify `sudo find /opt/euron-vod/dist -name '*.js' -size 0` prints nothing → `create-image
+   --no-reboot` → new LT version → stop builder.
+6. **`sync` before `create-image --no-reboot`, or the AMI ships a 0-byte `dist`.** `--no-reboot`
+   snapshots the EBS block device without flushing the page cache; ext4 delayed allocation means
+   freshly `rsync`ed files can be captured as **empty (0-byte) files** (inode + timestamp present,
+   data not yet on disk). Workers from such an AMI run an empty `dist/worker/index.js`, do nothing,
+   self-terminate in ~20-40s, and NEVER CLAIM — indistinguishable from a DB-connectivity failure
+   (no logs, since prod workers have no SSH/SSM/CloudWatch). This silently broke the HLS-only AND the
+   download-feature prod deploys. ALWAYS `sync` after the rsync and confirm `find … -size 0` is empty
+   before imaging. Diagnose a suspected bad AMI by launching it in a worker subnet (IGW + the
+   `172.30.0.0/16 → pcx-…` RDS peering route) with a key + `sg-0125707b…` (SSH) + the worker SG +
+   `euron-vod-worker-prod-role`, NO UserData (boots idle), then SSH in and check `dist` file sizes.
 
 ## Commands
 Backend: `pnpm dev | build | lint | type-check`, `npx prisma generate`, `pnpm build:lambda`.
