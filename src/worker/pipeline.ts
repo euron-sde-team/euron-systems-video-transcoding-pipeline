@@ -8,7 +8,8 @@ import { transcode } from "../encoding/ffmpeg";
 import { packageHlsAes } from "../encoding/hls-aes";
 import { selectLadder } from "../encoding/ladder";
 import { probe } from "../encoding/probe";
-import { packageCmaf } from "../encoding/shaka";
+// NOT IN USE (HLS-only migration): packageCmaf (cbcs CMAF + DASH) is no longer
+// called; its import is removed so src/encoding/shaka.ts is unwired from the build.
 import { generateThumbnails } from "../encoding/thumbnails";
 import contentKeyService from "../services/content-key.service";
 import s3UploadService from "../services/s3-upload.service";
@@ -92,13 +93,18 @@ export const transcodePipeline = async (
       captions = await generateCaptions(inputPath, renditionsDir, probed.hasAudio, captionsLang);
     }
 
-    // ── 4. packaging (generate + store key, then CMAF cbcs + dual manifest) ──
+    // ── 4. packaging (generate + store key, then AES-128 HLS-TS) ──
+    // NOTE (HLS-only migration): the AES-128 MPEG-TS HLS tree (step 4b) is now the
+    // ONLY delivery tree. The cbcs CMAF + DASH packaging (packageCmaf) is retained
+    // in src/encoding/shaka.ts but NOT IN USE. The AES tree's #EXT-X-KEY URI is
+    // injected per request by hls.controller.ts, so no hlsKeyUri is baked here.
     await hb.update("packaging", 75);
     const key = await contentKeyService.generateAndStore(video.tenant_id, video.id);
-    const hlsKeyUri = config.PUBLIC_API_BASE
-      ? `${config.PUBLIC_API_BASE.replace(/\/+$/, "")}/api/v1/videos/${video.id}/key?format=raw`
-      : undefined;
-    await packageCmaf({ outputDir, videoFiles, audioFile, captions, key, hlsKeyUri });
+    // NOT IN USE (HLS-only migration): cbcs CMAF + DASH packaging.
+    // const hlsKeyUri = config.PUBLIC_API_BASE
+    //   ? `${config.PUBLIC_API_BASE.replace(/\/+$/, "")}/api/v1/videos/${video.id}/key?format=raw`
+    //   : undefined;
+    // await packageCmaf({ outputDir, videoFiles, audioFile, captions, key, hlsKeyUri });
     await hb.update("packaging", 82);
 
     // ── 4b. AES-128 HLS-TS tree (Safari native path), same content key ──

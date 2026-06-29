@@ -3,6 +3,8 @@ export const ALLOWED_UPLOAD_EXT = new Set(["mp4", "mov", "mkv", "webm", "m4v"]);
 
 /** Output filenames produced by the packager + thumbnail pass (relative to output_prefix). */
 export const OUTPUT_FILES = {
+  // NOT IN USE (HLS-only migration): cbcs CMAF HLS master + DASH MPD are no longer
+  // produced or referenced by the active pipeline (kept for a future DASH/DRM path).
   hlsMaster: "master.m3u8",
   dashManifest: "manifest.mpd",
   poster: "poster.jpg",

@@ -1,3 +1,7 @@
+// NOT IN USE (HLS-only migration): the Shaka/cbcs + ClearKey engine hook.
+// Retained for reference / a possible future DASH + DRM path, but no longer
+// imported anywhere. The active player uses useHlsPlayer (non-iOS) + useNativeHls
+// (iOS). PlayerError + PlayerSource now live in useHlsPlayer.ts.
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import shaka from "../../lib/shaka";
 import { buildPlayerConfig, fetchClearKeys, manifestMime } from "./shakaConfig";

@@ -18,7 +18,8 @@ export interface AppSettings {
   tenantId: string;
   /** userId baked into minted playback tokens for the operator preview. */
   previewUserId: string;
-  /** Manifest the player loads (HLS or DASH). Global preference. */
+  /** NOT IN USE (HLS-only migration): manifest format toggle (HLS/DASH). Kept so
+   *  persisted settings keep parsing; the player always loads AES-128 HLS now. */
   streamFormat: StreamFormat;
 }
 
@@ -30,12 +31,9 @@ const DEFAULTS: AppSettings = {
   serviceKey: "",
   tenantId: "",
   previewUserId: "admin-preview",
-  // DASH, not HLS: on the Shaka/cbcs path (Chrome/Firefox), Shaka reliably exposes
-  // the DASH text AdaptationSet as a caption track, but it does NOT surface the cbcs
-  // HLS EXT-X-MEDIA:SUBTITLES rendition (a known Shaka HLS limitation), so HLS loses
-  // the CC button. Both carry the same captions; DASH is also the canonical static-MPD
-  // manifest. Safari is unaffected (it uses the native AES-128 HLS path, not this).
-  streamFormat: "dash",
+  // NOT IN USE (HLS-only migration): the player always loads the AES-128 HLS tree;
+  // retained only so older persisted settings keep parsing.
+  streamFormat: "hls",
 };
 
 type Listener = (settings: AppSettings) => void;

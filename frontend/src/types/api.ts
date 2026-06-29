@@ -22,21 +22,21 @@ export type StreamFormat = "hls" | "dash";
 export type WatermarkMode = "none" | "dynamic_overlay" | "forensic_ab";
 
 export interface PlaybackInfo {
-  /** Absolute CDN URL to the HLS master playlist (cbcs/MSE). */
-  hls: string;
-  /** Absolute CDN URL to the DASH manifest (cbcs/MSE). */
-  dash: string;
+  // NOT IN USE (HLS-only migration): cbcs CMAF HLS + DASH URLs (removed from DTO).
+  // hls: string;
+  // dash: string;
   /**
-   * RELATIVE AES-128 HLS master path ("/videos/:id/hls/master.m3u8") for native
-   * Safari/iOS. The player builds the absolute URL and appends ?token=.
+   * RELATIVE AES-128 HLS master path ("/videos/:id/hls/master.m3u8"). Both hls.js
+   * (non-iOS) and native Safari/iOS load this; the player appends ?token=.
    */
   hlsAes: string;
   /** Absolute CDN URL to the poster image. */
   poster: string;
   /** Absolute CDN URL to the WebVTT sprite thumbnails. */
   thumbnailsVtt: string;
-  /** RELATIVE key path ("/videos/:id/key"); the player builds the absolute URL. */
-  keyEndpoint: string;
+  // NOT IN USE (HLS-only migration): Shaka clearKeys fetch endpoint (the key URI is
+  // injected into the rewritten manifest now).
+  // keyEndpoint: string;
 }
 
 export interface VideoResponse {

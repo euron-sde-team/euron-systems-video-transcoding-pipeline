@@ -7,11 +7,11 @@ import contentKeyService from "../services/content-key.service";
  * GET /videos/:id/key  (playback token required)
  *
  * The real security boundary for clear-key. The token (verified by
- * requirePlaybackToken) must be bound to THIS video and tenant. Two response
- * shapes:
- *   - default JSON → Shaka clearKeys ({kid,k} base64url + a hex clearKeys map).
- *   - ?format=raw  → the 16 raw key bytes (application/octet-stream) for Apple
- *     native HLS, whose #EXT-X-KEY URI fetches the key directly.
+ * requirePlaybackToken) must be bound to THIS video and tenant.
+ *   - Always serves the 16 raw key bytes (application/octet-stream). Both native
+ *     Safari/iOS HLS and hls.js fetch the key directly from the #EXT-X-KEY URI.
+ * NOT IN USE (HLS-only migration): the default JSON response (Shaka clearKeys for
+ * the MSE/ClearKey path) is retained below but commented out; nothing uses it now.
  *
  * NOTE: AES-128 clear-key is DETERRENCE, not DRM. A logged-in user with devtools
  * can still capture the key. Never describe this as protection in UI/comments.
@@ -30,18 +30,16 @@ export const getVideoKey = async (req: Request, res: Response) => {
   res.set("Cache-Control", "no-store");
   res.set("Pragma", "no-cache");
 
-  if (req.query.format === "raw") {
-    res.set("Content-Type", "application/octet-stream");
-    res.status(200).send(key.keyBytes);
-    return;
-  }
+  // AES-128 HLS: always serve the raw 16 key bytes. Both native Safari/iOS and
+  // hls.js fetch this directly from the manifest's #EXT-X-KEY URI (?format=raw).
+  res.set("Content-Type", "application/octet-stream");
+  res.status(200).send(key.keyBytes);
 
-  const kidBytes = Buffer.from(key.kidHex, "hex");
-  res.status(200).json({
-    // W3C Clear Key (base64url), what the guide injects via drm.clearKeys.
-    kid: kidBytes.toString("base64url"),
-    k: key.keyBytes.toString("base64url"),
-    // Convenience hex map for Shaka's clearKeys config.
-    clearKeys: { [key.kidHex]: key.keyHex },
-  });
+  // NOT IN USE (HLS-only migration): Shaka clearKeys JSON (MSE/ClearKey path).
+  // const kidBytes = Buffer.from(key.kidHex, "hex");
+  // res.status(200).json({
+  //   kid: kidBytes.toString("base64url"),
+  //   k: key.keyBytes.toString("base64url"),
+  //   clearKeys: { [key.kidHex]: key.keyHex },
+  // });
 };

@@ -19,9 +19,11 @@ const r2 = new S3Client({
 
 const contentTypeFor = (file: string): string => {
   if (file.endsWith(".m3u8")) return "application/vnd.apple.mpegurl";
+  // NOT IN USE (HLS-only migration): .mpd (DASH) and .m4s (cbcs CMAF) are no longer
+  // produced; kept so any stray such file still receives a correct content type.
   if (file.endsWith(".mpd")) return "application/dash+xml";
   if (file.endsWith(".m4s")) return "video/iso.segment";
-  if (file.endsWith(".ts")) return "video/mp2t"; // AES-128 HLS-TS segments (Safari path)
+  if (file.endsWith(".ts")) return "video/mp2t"; // AES-128 HLS-TS segments (active path)
   if (file.endsWith(".mp4")) return "video/mp4";
   if (file.endsWith(".vtt")) return "text/vtt";
   if (file.endsWith(".jpg") || file.endsWith(".jpeg")) return "image/jpeg";
@@ -31,6 +33,8 @@ const contentTypeFor = (file: string): string => {
 // Manifests get a short TTL (so a re-publish propagates); everything else is
 // content-addressed-immutable for the life of the video.
 const cacheControlFor = (file: string): string =>
+  // NOT IN USE part: ".mpd" (DASH) is no longer produced; the ".m3u8" check is what
+  // matters now (AES HLS manifests get the short TTL; segments stay immutable).
   file.endsWith(".m3u8") || file.endsWith(".mpd")
     ? "public, max-age=300"
     : "public, max-age=31536000, immutable";

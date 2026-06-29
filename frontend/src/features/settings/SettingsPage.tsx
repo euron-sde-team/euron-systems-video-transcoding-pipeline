@@ -1,4 +1,6 @@
-import clsx from "clsx";
+// NOT IN USE (HLS-only migration): clsx was only used by the streaming-format
+// picker below (now commented out).
+// import clsx from "clsx";
 import { useState } from "react";
 import { Loader2, Plug } from "lucide-react";
 import { getHealth } from "../../api/health";
@@ -83,6 +85,9 @@ export function SettingsPage() {
           <input {...field("previewUserId")} className={inputCls} placeholder="admin-preview" />
         </label>
 
+        {/* NOT IN USE (HLS-only migration): the streaming-format (HLS/DASH) picker.
+            The player always loads the AES-128 HLS tree now, so this toggle is
+            removed from the UI (kept here, commented, for reference).
         <div>
           <span className="mb-1.5 block text-sm font-medium text-gray-300">
             Streaming format
@@ -108,6 +113,7 @@ export function SettingsPage() {
             ))}
           </div>
         </div>
+        */}
       </div>
 
       <div className="mt-7 flex items-center gap-3">

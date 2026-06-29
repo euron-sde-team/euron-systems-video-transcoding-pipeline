@@ -14,7 +14,7 @@ import { useControlsAutoHide } from "./useControlsAutoHide";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 import { usePlaybackState } from "./usePlaybackState";
 import { usePlayerTracks } from "./usePlayerTracks";
-import { type PlayerSource, useShakaPlayer } from "./useShakaPlayer";
+import { type PlayerSource, useHlsPlayer } from "./useHlsPlayer";
 import { useVttThumbnails } from "./useVttThumbnails";
 import { Watermark } from "./Watermark";
 
@@ -43,41 +43,37 @@ export function VideoPlayer({
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // Pick the playback path off NATIVE-HLS support, not a ClearKey-EME probe.
-  // Safari/iOS play native HLS (so use the AES-128 source there); Chrome/Firefox/
-  // Edge/Android can't play native HLS, so they fall through to Shaka/cbcs. Probing
-  // ClearKey EME is unreliable: some Safari builds resolve the probe yet still can't
-  // actually play cbcs+ClearKey, which wrongly routes them to Shaka (one frame, then
-  // a stall). `canPlayType('application/vnd.apple.mpegurl')` is the canonical signal.
+  // Pick the playback path off NATIVE-HLS support. Safari/iOS play the AES-128 HLS
+  // master natively; Chrome/Firefox/Edge/Android can't play HLS natively, so they
+  // use hls.js (MSE) over the SAME master. `canPlayType('application/vnd.apple.mpegurl')`
+  // gated to Apple WebKit is the canonical signal (see useNativeHls.canPlayNativeHls).
   const goNative = useMemo(
-    () => canPlayNativeHls() && Boolean(source.nativeHlsUrl),
-    [source.nativeHlsUrl]
+    () => canPlayNativeHls() && Boolean(source.hlsUrl),
+    [source.hlsUrl]
   );
 
   const {
-    player,
-    isBuffering: shakaBuffering,
-    error: shakaError,
-    thumbnailTrackId,
-    retry: shakaRetry,
-  } = useShakaPlayer(videoRef, goNative ? null : source);
-  const native = useNativeHls(videoRef, goNative ? (source.nativeHlsUrl ?? null) : null);
+    hls,
+    isBuffering: hlsBuffering,
+    error: hlsError,
+    retry: hlsRetry,
+  } = useHlsPlayer(videoRef, goNative ? null : source);
+  const native = useNativeHls(videoRef, goNative ? (source.hlsUrl ?? null) : null);
   const nativeCaptions = useNativeTextTracks(videoRef, goNative);
-  // Scrub thumbnails on the native path: Shaka's getThumbnails() is unavailable
-  // (no Shaka player), so parse the same thumbnails.vtt client-side. Disabled
-  // (null) on the Shaka path, which already sources tiles from getThumbnails().
-  const vttTiles = useVttThumbnails(goNative ? (source.thumbnailsVttUrl ?? null) : null);
+  // Scrub thumbnails: both engines parse the SAME thumbnails.vtt client-side
+  // (hls.js has no thumbnail-track API; native Safari has no Shaka either).
+  const vttTiles = useVttThumbnails(source.thumbnailsVttUrl ?? null);
 
-  const error = goNative ? native.error : shakaError;
-  const isBuffering = goNative ? native.isBuffering : shakaBuffering;
+  const error = goNative ? native.error : hlsError;
+  const isBuffering = goNative ? native.isBuffering : hlsBuffering;
 
   const retry = useCallback(() => {
     if (goNative) videoRef.current?.load();
-    else shakaRetry();
-  }, [goNative, shakaRetry]);
+    else hlsRetry();
+  }, [goNative, hlsRetry]);
 
   const state = usePlaybackState(videoRef);
-  const { textTracks, textVisible } = usePlayerTracks(player);
+  const { textTracks, textVisible } = usePlayerTracks(hls);
 
   // Captions: native textTracks on the Safari path, Shaka tracks otherwise.
   const captionsAvailable = goNative ? nativeCaptions.available : textTracks.length > 0;
@@ -104,7 +100,7 @@ export function VideoPlayer({
   // Apply playback rate to the element.
   useEffect(() => {
     if (videoRef.current) videoRef.current.playbackRate = playbackRate;
-  }, [playbackRate, player]);
+  }, [playbackRate, hls]);
 
   // Track fullscreen changes (incl. ESC).
   useEffect(() => {
@@ -121,18 +117,16 @@ export function VideoPlayer({
   }, []);
 
   const toggleCaptions = useCallback(() => {
-    if (!player) return;
-    if (player.isTextTrackVisible()) {
-      player.setTextTrackVisibility(false);
+    if (!hls) return;
+    if (hls.subtitleTrack >= 0) {
+      hls.subtitleTrack = -1;
       showOsd("Subtitles off");
-    } else {
-      const tracks = player.getTextTracks();
-      if (tracks.length === 0) return;
-      if (!tracks.some((t) => t.active)) player.selectTextTrack(tracks[0]);
-      player.setTextTrackVisibility(true);
+    } else if ((hls.subtitleTracks?.length ?? 0) > 0) {
+      hls.subtitleTrack = 0;
+      hls.subtitleDisplay = true;
       showOsd("Subtitles on");
     }
-  }, [player, showOsd]);
+  }, [hls, showOsd]);
 
   // Captions toggle that targets whichever path is active.
   const onToggleCaptions = useCallback(() => {
@@ -146,7 +140,7 @@ export function VideoPlayer({
 
   useKeyboardShortcuts({
     videoRef,
-    enabled: Boolean(player) || goNative,
+    enabled: Boolean(hls) || goNative,
     onToggleFullscreen: toggleFullscreen,
     onToggleCaptions,
     showOsd,
@@ -256,9 +250,8 @@ export function VideoPlayer({
         {!error && (
           <ControlBar
             video={videoRef.current}
-            player={player}
+            hls={hls}
             state={state}
-            thumbnailTrackId={thumbnailTrackId}
             vttTiles={vttTiles}
             playbackRate={playbackRate}
             onPlaybackRateChange={setPlaybackRate}

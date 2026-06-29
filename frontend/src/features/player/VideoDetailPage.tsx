@@ -22,7 +22,7 @@ export function VideoDetailPage() {
       <div className="px-6 py-6">
         <BackLink />
         <div className="mt-4">
-          <VideoPlayer source={{ manifestUrl: manualManifest }} orientation="landscape" />
+          <VideoPlayer source={{ hlsUrl: manualManifest }} orientation="landscape" />
           <p className="mt-3 text-xs text-gray-500">Manual manifest (no decryption key).</p>
         </div>
       </div>
@@ -95,16 +95,18 @@ function ReadyPlayer({ video }: { video: VideoResponse }) {
   }, [needsKey, requestToken]);
 
   const playback = video.playback!;
-  const keyUrl =
-    needsKey && token
-      ? `${apiUrl(playback.keyEndpoint)}?token=${encodeURIComponent(token)}`
-      : undefined;
-  // Native Safari source (AES-128 HLS). Needs the token in the URL (native HLS
-  // can't send headers); the player only uses it when ClearKey EME is absent.
-  const nativeHlsUrl =
-    token && playback.hlsAes
-      ? `${apiUrl(playback.hlsAes)}?token=${encodeURIComponent(token)}`
-      : undefined;
+  // Both engines (hls.js on non-iOS + native Safari/iOS) load the AES-128 HLS
+  // master. The token rides in the URL (native HLS can't send headers); the
+  // per-request manifest rewrite injects it into the key + variant URIs, and
+  // hls.js / Safari fetch the AES-128 key directly from the #EXT-X-KEY URI.
+  const hlsUrl = token
+    ? `${apiUrl(playback.hlsAes)}?token=${encodeURIComponent(token)}`
+    : apiUrl(playback.hlsAes);
+  // NOT IN USE (HLS-only migration): the Shaka clearKeys fetch URL (keyEndpoint).
+  // const keyUrl =
+  //   needsKey && token
+  //     ? `${apiUrl(playback.keyEndpoint)}?token=${encodeURIComponent(token)}`
+  //     : undefined;
 
   if (needsKey && !token) {
     return (
@@ -129,10 +131,8 @@ function ReadyPlayer({ video }: { video: VideoResponse }) {
   return (
     <VideoPlayer
       source={{
-        manifestUrl: settings.streamFormat === "dash" ? playback.dash : playback.hls,
-        keyUrl,
+        hlsUrl,
         thumbnailsVttUrl: playback.thumbnailsVtt,
-        nativeHlsUrl,
       }}
       poster={playback.poster}
       orientation={video.orientation ?? "landscape"}

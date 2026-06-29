@@ -1,16 +1,13 @@
 import { useRef, useState } from "react";
 import type { BufferedRange } from "./usePlaybackState";
 import { ThumbnailPreview } from "./ThumbnailPreview";
-import type { ShakaPlayer } from "./useShakaPlayer";
 import type { ThumbTile } from "./useVttThumbnails";
 
 interface SeekBarProps {
   currentTime: number;
   duration: number;
   buffered: BufferedRange[];
-  player: ShakaPlayer | null;
-  thumbnailTrackId: number | null;
-  /** Native-path (Safari/iOS) thumbnail tiles, parsed from thumbnails.vtt. */
+  /** Scrub-preview tiles parsed from thumbnails.vtt (both engines). */
   vttTiles: ThumbTile[] | null;
   onSeek: (time: number) => void;
   onScrubChange: (scrubbing: boolean) => void;
@@ -22,8 +19,6 @@ export function SeekBar({
   currentTime,
   duration,
   buffered,
-  player,
-  thumbnailTrackId,
   vttTiles,
   onSeek,
   onScrubChange,
@@ -62,12 +57,7 @@ export function SeekBar({
           className="pointer-events-none absolute bottom-5 z-10 -translate-x-1/2"
           style={{ left: previewLeft }}
         >
-          <ThumbnailPreview
-            player={player}
-            trackId={thumbnailTrackId}
-            vttTiles={vttTiles}
-            time={hover.time}
-          />
+          <ThumbnailPreview vttTiles={vttTiles} time={hover.time} />
         </div>
       )}
 

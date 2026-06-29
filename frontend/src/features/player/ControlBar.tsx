@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import type Hls from "hls.js";
 import {
   Captions,
   Maximize,
@@ -11,16 +12,14 @@ import { formatTime } from "../../lib/format";
 import { SeekBar } from "./SeekBar";
 import { SettingsMenu } from "./SettingsMenu";
 import type { PlaybackState } from "./usePlaybackState";
-import type { ShakaPlayer } from "./useShakaPlayer";
 import type { ThumbTile } from "./useVttThumbnails";
 import { VolumeControl } from "./VolumeControl";
 
 interface Props {
   video: HTMLVideoElement | null;
-  player: ShakaPlayer | null;
+  hls: Hls | null;
   state: PlaybackState;
-  thumbnailTrackId: number | null;
-  /** Native-path (Safari/iOS) thumbnail tiles, parsed from thumbnails.vtt. */
+  /** Scrub-preview tiles parsed from thumbnails.vtt (both engines use this now). */
   vttTiles: ThumbTile[] | null;
   playbackRate: number;
   onPlaybackRateChange: (rate: number) => void;
@@ -34,9 +33,8 @@ interface Props {
 
 export function ControlBar({
   video,
-  player,
+  hls,
   state,
-  thumbnailTrackId,
   vttTiles,
   playbackRate,
   onPlaybackRateChange,
@@ -74,8 +72,6 @@ export function ControlBar({
         currentTime={state.currentTime}
         duration={state.duration}
         buffered={state.buffered}
-        player={player}
-        thumbnailTrackId={thumbnailTrackId}
         vttTiles={vttTiles}
         onSeek={(t) => {
           if (video) video.currentTime = t;
@@ -117,7 +113,7 @@ export function ControlBar({
           )}
 
           <SettingsMenu
-            player={player}
+            hls={hls}
             playbackRate={playbackRate}
             onPlaybackRateChange={onPlaybackRateChange}
           />

@@ -1,3 +1,6 @@
+// NOT IN USE (HLS-only migration): typed Shaka core entry point. No longer
+// imported by the active player (kept for reference / future DASH+DRM).
+//
 // Single typed entry point for the Shaka core (UI-less) build.
 //
 // Clutz emits shaka-player's types as a GLOBAL `shaka` namespace (see

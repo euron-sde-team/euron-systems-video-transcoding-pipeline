@@ -1,24 +1,24 @@
 import clsx from "clsx";
+import type Hls from "hls.js";
 import { Check, ChevronRight, Settings } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { usePlayerTracks } from "./usePlayerTracks";
-import type { ShakaPlayer } from "./useShakaPlayer";
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
 type View = "root" | "quality" | "speed" | "captions";
 
 interface Props {
-  player: ShakaPlayer | null;
+  hls: Hls | null;
   playbackRate: number;
   onPlaybackRateChange: (rate: number) => void;
 }
 
-export function SettingsMenu({ player, playbackRate, onPlaybackRateChange }: Props) {
+export function SettingsMenu({ hls, playbackRate, onPlaybackRateChange }: Props) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>("root");
   const rootRef = useRef<HTMLDivElement>(null);
-  const { qualities, abrEnabled, textTracks, textVisible } = usePlayerTracks(player);
+  const { qualities, abrEnabled, textTracks, textVisible } = usePlayerTracks(hls);
 
   useEffect(() => {
     if (!open) return;
@@ -31,25 +31,25 @@ export function SettingsMenu({ player, playbackRate, onPlaybackRateChange }: Pro
 
   const activeHeight = qualities.find((q) => q.active)?.height ?? null;
   const activeText = textTracks.find((t) => t.active);
-  const textLabel = (t: (typeof textTracks)[number]) =>
-    t.label || t.language?.toUpperCase() || "Subtitle";
+  const textLabel = (t: (typeof textTracks)[number]) => t.label;
 
   const selectAuto = () => {
-    player?.configure({ abr: { enabled: true } });
+    if (hls) hls.currentLevel = -1; // -1 → ABR auto
     setView("root");
   };
   const selectHeight = (q: (typeof qualities)[number]) => {
-    player?.configure({ abr: { enabled: false } });
-    player?.selectVariantTrack(q.track, true);
+    if (hls) hls.currentLevel = q.levelIndex; // lock this rung (disables ABR)
     setView("root");
   };
   const captionsOff = () => {
-    player?.setTextTrackVisibility(false);
+    if (hls) hls.subtitleTrack = -1;
     setView("root");
   };
   const selectText = (t: (typeof textTracks)[number]) => {
-    player?.selectTextTrack(t);
-    player?.setTextTrackVisibility(true);
+    if (hls) {
+      hls.subtitleTrack = t.id;
+      hls.subtitleDisplay = true;
+    }
     setView("root");
   };
 

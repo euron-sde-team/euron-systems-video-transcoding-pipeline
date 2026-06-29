@@ -58,13 +58,14 @@ export interface VideoResponse {
   download?: string | null;
   /** Present only when status='ready'. Absolute CDN URLs (except API-relative keyEndpoint/hlsAes). */
   playback?: {
-    hls: string;
-    dash: string;
-    /** AES-128 HLS-TS master for the native-Safari path; API-relative, served + rewritten per request. */
+    // NOT IN USE (HLS-only migration): cbcs CMAF HLS + DASH + ClearKey endpoint.
+    // hls: string;
+    // dash: string;
+    /** AES-128 HLS-TS master; API-relative, served + rewritten per request (native Safari + hls.js). */
     hlsAes: string;
     poster: string;
     thumbnailsVtt: string;
-    keyEndpoint: string;
+    // keyEndpoint: string;
   } | null;
 }
 
@@ -108,12 +109,15 @@ function toVideoResponse(row: VideoRow): VideoResponse {
     playback:
       isReady && config.R2_PUBLIC_BASE
         ? {
-            hls: cdnUrl(prefix, OUTPUT_FILES.hlsMaster),
-            dash: cdnUrl(prefix, OUTPUT_FILES.dashManifest),
+            // NOT IN USE (HLS-only migration): cbcs CMAF HLS + DASH URLs.
+            // hls: cdnUrl(prefix, OUTPUT_FILES.hlsMaster),
+            // dash: cdnUrl(prefix, OUTPUT_FILES.dashManifest),
             hlsAes: `/videos/${row.id}/hls/master.m3u8`,
             poster: cdnUrl(prefix, OUTPUT_FILES.poster),
             thumbnailsVtt: cdnUrl(prefix, OUTPUT_FILES.thumbnailsVtt),
-            keyEndpoint: `/videos/${row.id}/key`,
+            // NOT IN USE (HLS-only migration): Shaka clearKeys fetch endpoint; the
+            // AES key URI is injected into the rewritten manifest instead.
+            // keyEndpoint: `/videos/${row.id}/key`,
           }
         : null,
   };

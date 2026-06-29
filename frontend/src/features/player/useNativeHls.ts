@@ -1,5 +1,5 @@
 import { type RefObject, useCallback, useEffect, useState } from "react";
-import type { PlayerError } from "./useShakaPlayer";
+import type { PlayerError } from "./useHlsPlayer";
 
 /**
  * Native AES-128 HLS playback for Safari/iOS, which have no ClearKey CDM (only

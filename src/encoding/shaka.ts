@@ -1,3 +1,7 @@
+// NOT IN USE (HLS-only migration): cbcs CMAF + DASH packaging.
+// This module (packageCmaf) is retained for reference and a possible future
+// DASH + DRM path, but it is no longer imported or called anywhere. The active
+// pipeline produces ONLY the AES-128 MPEG-TS HLS tree (see src/encoding/hls-aes.ts).
 import config from "../config";
 import { run } from "./exec";
 import type { Rung } from "./ladder";

@@ -1,70 +1,88 @@
+import Hls from "hls.js";
 import { useEffect, useState } from "react";
-import type { ShakaPlayer } from "./useShakaPlayer";
-
-type VariantTrack = ReturnType<ShakaPlayer["getVariantTracks"]>[number];
-type TextTrack = ReturnType<ShakaPlayer["getTextTracks"]>[number];
 
 export interface QualityOption {
   height: number;
   label: string;
-  track: VariantTrack;
+  /** Index into hls.levels; set hls.currentLevel = levelIndex to lock this rung. */
+  levelIndex: number;
+  active: boolean;
+}
+
+export interface TextTrackOption {
+  /** Index into hls.subtitleTracks (== hls.subtitleTrack when selected). */
+  id: number;
+  label: string;
+  language?: string;
   active: boolean;
 }
 
 export interface TrackInfo {
   qualities: QualityOption[];
   abrEnabled: boolean;
-  textTracks: TextTrack[];
+  textTracks: TextTrackOption[];
   textVisible: boolean;
 }
 
-/** Reads quality/caption tracks and refreshes on Shaka adaptation/track events. */
-export function usePlayerTracks(player: ShakaPlayer | null): TrackInfo {
+/** Reads quality/caption tracks from hls.js and refreshes on its level/subtitle events. */
+export function usePlayerTracks(hls: Hls | null): TrackInfo {
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
-    if (!player) return;
+    if (!hls) return;
     const bump = () => setNonce((n) => n + 1);
-    const events = ["adaptation", "variantchanged", "textchanged", "trackschanged", "loaded"];
-    events.forEach((e) => player.addEventListener(e, bump));
+    const events = [
+      Hls.Events.MANIFEST_PARSED,
+      Hls.Events.LEVEL_SWITCHED,
+      Hls.Events.LEVEL_LOADED,
+      Hls.Events.SUBTITLE_TRACKS_UPDATED,
+      Hls.Events.SUBTITLE_TRACK_SWITCH,
+    ];
+    events.forEach((e) => hls.on(e, bump));
     bump();
-    return () => events.forEach((e) => player.removeEventListener(e, bump));
-  }, [player]);
+    return () => events.forEach((e) => hls.off(e, bump));
+  }, [hls]);
 
-  // nonce intentionally drives recomputation when Shaka fires track events.
+  // nonce intentionally drives recomputation when hls.js fires track events.
   void nonce;
 
-  if (!player) {
+  if (!hls) {
     return { qualities: [], abrEnabled: true, textTracks: [], textVisible: false };
   }
 
-  // Distinct video heights, best first. Mark the rung Shaka is currently playing.
+  const levels = hls.levels ?? [];
+  const current = hls.currentLevel; // -1 = auto / not yet known
+  const activeHeight = current >= 0 && levels[current] ? levels[current].height : null;
+
+  // Distinct heights, best (highest-bitrate) level per height, sorted high → low.
   const byHeight = new Map<number, QualityOption>();
-  for (const track of player.getVariantTracks()) {
-    if (track.height == null) continue;
-    const existing = byHeight.get(track.height);
-    if (!existing || track.active) {
-      byHeight.set(track.height, {
-        height: track.height,
-        label: `${track.height}p`,
-        track,
-        active: Boolean(track.active),
+  levels.forEach((lvl, i) => {
+    if (!lvl.height) return;
+    const existing = byHeight.get(lvl.height);
+    if (!existing || (lvl.bitrate ?? 0) > (levels[existing.levelIndex].bitrate ?? 0)) {
+      byHeight.set(lvl.height, {
+        height: lvl.height,
+        label: `${lvl.height}p`,
+        levelIndex: i,
+        active: lvl.height === activeHeight,
       });
     }
-  }
+  });
   const qualities = Array.from(byHeight.values()).sort((a, b) => b.height - a.height);
 
-  let abrEnabled = true;
-  try {
-    abrEnabled = Boolean(player.getConfiguration().abr?.enabled);
-  } catch {
-    /* default true */
-  }
+  const subs = hls.subtitleTracks ?? [];
+  const currentSub = hls.subtitleTrack; // index into subtitleTracks, -1 = none
+  const textTracks: TextTrackOption[] = subs.map((s, i) => ({
+    id: i,
+    label: s.name || (s.lang ? s.lang.toUpperCase() : "") || "Subtitle",
+    language: s.lang,
+    active: i === currentSub,
+  }));
 
   return {
     qualities,
-    abrEnabled,
-    textTracks: player.getTextTracks(),
-    textVisible: player.isTextTrackVisible(),
+    abrEnabled: hls.autoLevelEnabled,
+    textTracks,
+    textVisible: currentSub >= 0,
   };
 }

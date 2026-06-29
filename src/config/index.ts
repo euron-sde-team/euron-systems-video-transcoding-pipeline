@@ -42,9 +42,9 @@ const config = {
   // ─── Auth ──────────────────────────────────────────────────────────────────
   // Service-to-service shared secret for the management API.
   SERVICE_API_KEY: process.env.SERVICE_API_KEY ?? "change-me-service-key",
-  // Public base URL of THIS service's API (e.g. https://video.euron.one). Used
-  // only to bake the native-HLS key URI into manifests; leave blank to omit it
-  // (the Shaka/MSE clearKeys path doesn't need it).
+  // Public base URL of THIS service's API (e.g. https://video.euron.one), used by
+  // the per-request HLS manifest rewrite (hls.controller.ts) to build the tokenized
+  // AES-128 key URI. Set this to the reachable API base (the ngrok URL in dev).
   PUBLIC_API_BASE: process.env.PUBLIC_API_BASE ?? "",
 
   // HS256 secret for short-TTL playback tokens (the actual security boundary).
@@ -118,6 +118,8 @@ const config = {
   CAPTIONS_DEFAULT_LANG: process.env.CAPTIONS_DEFAULT_LANG ?? "en",
   FFMPEG_BIN: process.env.FFMPEG_BIN ?? "ffmpeg",
   FFPROBE_BIN: process.env.FFPROBE_BIN ?? "ffprobe",
+  // NOT IN USE (HLS-only migration): Shaka Packager (cbcs CMAF + DASH) is no longer
+  // invoked; retained so a future DASH/DRM path can re-enable it.
   SHAKA_PACKAGER_BIN: process.env.SHAKA_PACKAGER_BIN ?? "packager",
   WORK_DIR: process.env.WORK_DIR ?? "/tmp/euron-vod",
   WORKER_DRY_RUN_SHUTDOWN: (process.env.WORKER_DRY_RUN_SHUTDOWN ?? "true") !== "false",

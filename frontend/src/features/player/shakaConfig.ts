@@ -1,3 +1,5 @@
+// NOT IN USE (HLS-only migration): Shaka cbcs/ClearKey config helpers. Retained
+// for reference but no longer imported (the AES-128 HLS path needs no clearKeys).
 import type { ClearKeyResponse } from "../../types/api";
 
 export type ManifestType = "hls" | "dash";

@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { formatTime } from "../../lib/format";
-import type { ShakaPlayer } from "./useShakaPlayer";
 import { type ThumbTile, thumbAtTime } from "./useVttThumbnails";
 
 const PREVIEW_WIDTH = 160; // px
 
-// Natural sprite-sheet dimensions, cached per sheet URL. Shaka's
-// addThumbnailsTrack() never declares the sheet size for an external WebVTT
-// track, so getThumbnails() reports imageWidth/imageHeight as 0. We measure the
-// sheet once and reuse it for every tile (the CSS sprite needs the full sheet
-// size for backgroundSize; with 0 the sprite scales to nothing and is invisible).
+// Natural sprite-sheet dimensions, cached per sheet URL. The thumbnails.vtt does
+// not declare the sheet size, so we measure it once and reuse it for every tile
+// (the CSS sprite needs the full sheet size for backgroundSize; with 0 the sprite
+// scales to nothing and is invisible).
 const sheetSizeCache = new Map<string, { width: number; height: number }>();
 
 // Drop the #xywh media fragment so every tile in a sheet shares one URL/entry.
@@ -17,20 +15,14 @@ const sheetUrlOf = (uri: string): string => uri.split("#")[0];
 
 /**
  * Seek-bar hover preview. Maps the sprite tile covering `time` into a CSS sprite.
- * Two sources feed the identical renderer: Shaka's getThumbnails() on the MSE path
- * (Chrome/Firefox/Edge), and a client-parsed `thumbnails.vtt` (vttTiles) on the
- * native path (Safari/iOS) where there is no Shaka player. Tile geometry is correct
- * either way; the sheet size is measured client-side because Shaka reports it as 0
- * for external WebVTT and the VTT itself does not declare it.
+ * Both engines (hls.js on non-iOS + native Safari/iOS) feed the SAME renderer from
+ * a client-parsed `thumbnails.vtt` (vttTiles); the sheet size is measured
+ * client-side because the VTT does not declare it.
  */
 export function ThumbnailPreview({
-  player,
-  trackId,
   vttTiles,
   time,
 }: {
-  player: ShakaPlayer | null;
-  trackId: number | null;
   vttTiles: ThumbTile[] | null;
   time: number;
 }) {
@@ -42,42 +34,13 @@ export function ThumbnailPreview({
   useEffect(() => {
     const r = lastRangeRef.current;
     if (r && time >= r.start && time < r.end) return; // same tile, keep current
-
-    // Native (Safari/iOS) path: no Shaka player, resolve the tile from the VTT.
-    if (!player || trackId == null) {
-      if (!vttTiles) return;
-      const t = thumbAtTime(vttTiles, time);
-      if (t) {
-        lastRangeRef.current = { start: t.startTime, end: t.startTime + t.duration };
-        setThumb(t);
-      }
-      return;
+    if (!vttTiles) return;
+    const t = thumbAtTime(vttTiles, time);
+    if (t) {
+      lastRangeRef.current = { start: t.startTime, end: t.startTime + t.duration };
+      setThumb(t);
     }
-
-    // MSE (Shaka) path.
-    let cancelled = false;
-    player
-      .getThumbnails(trackId, time)
-      .then((t) => {
-        if (cancelled || !t) return;
-        lastRangeRef.current = { start: t.startTime, end: t.startTime + t.duration };
-        setThumb({
-          startTime: t.startTime,
-          duration: t.duration,
-          positionX: t.positionX,
-          positionY: t.positionY,
-          width: t.width,
-          height: t.height,
-          uris: t.uris,
-        });
-      })
-      .catch(() => {
-        /* previews are best-effort */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [player, trackId, vttTiles, time]);
+  }, [vttTiles, time]);
 
   // The sheet URL (fragment stripped) for the current tile; stable within a sheet.
   const sheetUrl = thumb && thumb.uris.length > 0 ? sheetUrlOf(thumb.uris[0]) : null;
