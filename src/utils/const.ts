@@ -14,9 +14,19 @@ export const OUTPUT_FILES = {
 } as const;
 
 /**
- * Private upload-bucket key of the processed downloadable MP4 (the unencrypted
- * master offered to the uploader). Convention-derived so the worker (writer) and
- * the API (presigner) agree without a DB column.
+ * Single private Cloudflare R2 bucket holding the processed downloadable MP4s
+ * (the unencrypted masters offered to uploaders). ONE bucket shared by dev and
+ * prod by design. It MUST NOT have a public binding (no r2.dev, no custom
+ * domain): objects are served only via short-lived presigned GET. The bucket
+ * NAME is a const (not an env var / SSM param) so the worker (writer) and the API
+ * (presigner) can never drift; the R2 credentials still come from config/.env.
+ */
+export const R2_DOWNLOADS_BUCKET = "euron-vod-downloads";
+
+/**
+ * R2 key of the processed downloadable MP4 inside R2_DOWNLOADS_BUCKET.
+ * Convention-derived so the worker (writer) and the API (presigner) agree
+ * without a DB column.
  */
 export const processedDownloadKey = (tenantId: string, videoId: string): string =>
   `processed/${tenantId}/${videoId}.mp4`;

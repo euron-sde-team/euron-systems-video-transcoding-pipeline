@@ -16,7 +16,7 @@ import s3UploadService from "../services/s3-upload.service";
 import { HLS_AES_KEY_URI_PLACEHOLDER, processedDownloadKey } from "../utils/const";
 import logger from "../utils/logger";
 import type { Heartbeat } from "./heartbeat";
-import { uploadOutputTree } from "./r2";
+import { uploadOutputTree, uploadProcessedDownload } from "./r2";
 
 export interface PipelineOutcome {
   captionsLangs: string[];
@@ -122,15 +122,15 @@ export const transcodePipeline = async (
     });
     await hb.update("packaging", 85);
 
-    // ── 4c. processed downloadable MP4 → PRIVATE upload bucket (non-fatal) ──
+    // ── 4c. processed downloadable MP4 → PRIVATE R2 downloads bucket (non-fatal) ──
+    // The unencrypted master is uploaded to a private R2 bucket (free egress),
+    // served only via a short-lived presigned GET. It must NOT hit the public CDN.
+    // NOT IN USE (processed download moved to R2): the previous private-S3 upload
+    // (s3UploadService.uploadFile) is retired; only the R2 path runs now.
     try {
       const processed = await muxProcessedDownload(videoFiles, audioFile, renditionsDir);
       if (processed) {
-        await s3UploadService.uploadFile(
-          processedDownloadKey(video.tenant_id, video.id),
-          processed,
-          "video/mp4"
-        );
+        await uploadProcessedDownload(processedDownloadKey(video.tenant_id, video.id), processed);
       }
     } catch (err) {
       logger.error(

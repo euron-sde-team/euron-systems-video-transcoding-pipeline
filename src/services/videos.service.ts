@@ -10,7 +10,10 @@ import { UnprocessableError } from "../errors/unprocessable.error";
 import videosRepository, { type VideoRow } from "../repositories/videos.repository";
 import { ALLOWED_UPLOAD_EXT, OUTPUT_FILES, processedDownloadKey } from "../utils/const";
 import playbackTokenService from "./playback-token.service";
-import { sumPrefixBytes } from "./r2-read.service";
+import {
+  getProcessedDownloadUrl as getR2ProcessedDownloadUrl,
+  sumPrefixBytes,
+} from "./r2-read.service";
 import s3UploadService from "./s3-upload.service";
 
 /** Max ids accepted per batch storage request (bounds the fan-out of R2 LISTs). */
@@ -222,8 +225,8 @@ class VideosService {
 
   /**
    * Mint a short-lived presigned URL for the processed downloadable MP4 (the
-   * unencrypted master in the PRIVATE upload bucket). 404 until the worker has
-   * produced it.
+   * unencrypted master in the PRIVATE R2 downloads bucket; free egress). 404 until
+   * the worker has produced it.
    */
   async getProcessedDownloadUrl(
     tenantId: string,
@@ -236,11 +239,7 @@ class VideosService {
     const base =
       typeof pc.title === "string" && pc.title.trim() ? pc.title.trim() : `video-${id.slice(0, 8)}`;
     const filename = `${base.replace(/[^\w.-]+/g, "_")}.mp4`;
-    const url = await s3UploadService.getPresignedDownloadUrl(
-      processedDownloadKey(tenantId, id),
-      ttl,
-      filename
-    );
+    const url = await getR2ProcessedDownloadUrl(processedDownloadKey(tenantId, id), ttl, filename);
     if (!url) throw new NotFoundError("Processed download not available yet");
     return { url, expiresIn: ttl, filename };
   }

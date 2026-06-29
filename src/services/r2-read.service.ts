@@ -1,5 +1,12 @@
-import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
+import {
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  S3Client,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import config from "../config";
+import { R2_DOWNLOADS_BUCKET } from "../utils/const";
 
 // API-side R2 reader (R2 is S3-compatible). The worker writes the output tree;
 // the API reads back the small AES-128 HLS manifests to rewrite them per request.
@@ -50,4 +57,34 @@ export const sumPrefixBytes = async (prefix: string): Promise<number> => {
     token = out.IsTruncated ? out.NextContinuationToken : undefined;
   } while (token);
   return total;
+};
+
+/**
+ * Mint a short-lived presigned GET URL for the processed downloadable MP4 in the
+ * PRIVATE R2 downloads bucket, or null if it is not there yet (worker has not
+ * produced it). `downloadName` sets a friendly Content-Disposition filename for
+ * the browser's "Save as". R2 is S3-compatible, so the same presigner + response
+ * overrides used for S3 work here, and R2 egress is free.
+ */
+export const getProcessedDownloadUrl = async (
+  key: string,
+  ttlSeconds: number,
+  downloadName?: string
+): Promise<string | null> => {
+  try {
+    await r2.send(new HeadObjectCommand({ Bucket: R2_DOWNLOADS_BUCKET, Key: key }));
+  } catch {
+    return null;
+  }
+  return getSignedUrl(
+    r2,
+    new GetObjectCommand({
+      Bucket: R2_DOWNLOADS_BUCKET,
+      Key: key,
+      ...(downloadName
+        ? { ResponseContentDisposition: `attachment; filename="${downloadName}"` }
+        : {}),
+    }),
+    { expiresIn: ttlSeconds }
+  );
 };

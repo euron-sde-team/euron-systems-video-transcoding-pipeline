@@ -62,10 +62,11 @@ class S3UploadService {
   }
 
   /**
-   * Worker: upload a local file into the (private) upload bucket. Used for the
-   * processed downloadable MP4, which is the unencrypted master and therefore must
-   * NOT live on the public R2 CDN, it stays in this private bucket behind a
-   * service-authed presigned GET.
+   * NOT IN USE (processed download moved to R2): the processed downloadable MP4 now
+   * goes to the private R2 downloads bucket (uploadProcessedDownload in worker/r2.ts)
+   * for free egress. Retained per deprecate-don't-delete; no caller remains.
+   *
+   * Worker: upload a local file into the (private) upload bucket.
    */
   async uploadFile(key: string, filePath: string, contentType: string): Promise<void> {
     const size = (await stat(filePath)).size;
@@ -81,6 +82,10 @@ class S3UploadService {
   }
 
   /**
+   * NOT IN USE (processed download moved to R2): the processed-download presign now
+   * lives in r2-read.service.ts (getProcessedDownloadUrl). Retained per
+   * deprecate-don't-delete; no caller remains.
+   *
    * API: mint a short-lived presigned GET URL for a private upload-bucket object,
    * or null if it does not exist. `downloadName` sets a friendly Content-Disposition
    * filename for the browser's "Save as".

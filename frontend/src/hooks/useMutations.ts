@@ -1,10 +1,12 @@
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import {
   cancelVideo,
+  getDownloadUrl,
   mintPlaybackToken,
   renameVideo,
   retryVideo,
 } from "../api/videos";
+import { triggerBrowserDownload } from "../lib/download";
 import type { VideoListResponse, VideoResponse } from "../types/api";
 
 /** Optimistically patch a video everywhere it is cached (detail + every list page). */
@@ -94,6 +96,18 @@ export function useMintPlaybackToken() {
   return useMutation({
     mutationFn: ({ id, userId, ttlSeconds }: { id: string; userId: string; ttlSeconds?: number }) =>
       mintPlaybackToken(id, userId, ttlSeconds),
+  });
+}
+
+/**
+ * Download the processed MP4: mint a short-lived signed URL, then trigger the
+ * browser save. Use one instance per button so `isPending` is scoped to it;
+ * components pass `onError` to `mutate()` for a toast.
+ */
+export function useDownloadVideo() {
+  return useMutation({
+    mutationFn: (id: string) => getDownloadUrl(id),
+    onSuccess: (res) => triggerBrowserDownload(res.url, res.filename),
   });
 }
 

@@ -3,6 +3,7 @@ import { readdir, stat } from "fs/promises";
 import path from "path";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import config from "../config";
+import { R2_DOWNLOADS_BUCKET } from "../utils/const";
 import logger from "../utils/logger";
 
 // R2 is S3-compatible: region "auto", custom endpoint, R2 creds. Path-style
@@ -106,4 +107,24 @@ export const uploadOutputTree = async (
 
   logger.info(`[r2] uploaded ${files.length} files (${bytes} bytes) → ${outputPrefix}/`);
   return { fileCount: files.length, bytes };
+};
+
+/**
+ * Upload the processed downloadable MP4 (the unencrypted master) into the PRIVATE
+ * R2 downloads bucket. Kept OUT of the public output bucket / CDN: this is the
+ * full unencrypted video, served only via a short-lived presigned GET. No public
+ * cache headers (the object is private).
+ */
+export const uploadProcessedDownload = async (key: string, filePath: string): Promise<void> => {
+  const size = (await stat(filePath)).size;
+  await r2.send(
+    new PutObjectCommand({
+      Bucket: R2_DOWNLOADS_BUCKET,
+      Key: key,
+      Body: createReadStream(filePath),
+      ContentLength: size,
+      ContentType: "video/mp4",
+    })
+  );
+  logger.info(`[r2] uploaded processed download (${size} bytes) → ${R2_DOWNLOADS_BUCKET}/${key}`);
 };

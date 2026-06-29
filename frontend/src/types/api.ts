@@ -109,6 +109,16 @@ export interface PlaybackTokenResponse {
   videoId: string;
 }
 
+/** Short-lived signed URL for the processed downloadable MP4 (GET /videos/:id/download). */
+export interface DownloadResponse {
+  /** Presigned R2 GET URL; carries Content-Disposition: attachment. */
+  url: string;
+  /** Seconds the URL stays valid. */
+  expiresIn: number;
+  /** Friendly "Save as" filename derived from the video title. */
+  filename: string;
+}
+
 export interface ClearKeyResponse {
   kid: string;
   k: string;

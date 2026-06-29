@@ -1,12 +1,13 @@
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Download, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { StageProgress } from "../../components/StageProgress";
 import { StatusPill } from "../../components/StatusPill";
-import { useMintPlaybackToken } from "../../hooks/useMutations";
+import { useToast } from "../../components/Toast";
+import { useDownloadVideo, useMintPlaybackToken } from "../../hooks/useMutations";
 import { useSettings } from "../../hooks/useSettings";
 import { useVideo } from "../../hooks/useVideo";
-import { apiUrl } from "../../lib/apiClient";
+import { apiUrl, ApiError } from "../../lib/apiClient";
 import type { VideoResponse } from "../../types/api";
 import { VideoPlayer } from "./VideoPlayer";
 
@@ -56,6 +57,7 @@ function VideoDetail({ id }: { id?: string }) {
           <div className="mb-4 flex items-center gap-3">
             <h2 className="text-lg font-semibold text-gray-100">{video.displayName}</h2>
             <StatusPill status={video.status} />
+            {video.status === "ready" && video.download && <DownloadMp4Button video={video} />}
           </div>
 
           {video.status === "ready" && video.playback ? (
@@ -143,6 +145,32 @@ function ReadyPlayer({ video }: { video: VideoResponse }) {
       }
       onKeyAuthRetry={requestToken}
     />
+  );
+}
+
+/** Mints a short-lived signed URL and saves the processed MP4 (uploader download). */
+function DownloadMp4Button({ video }: { video: VideoResponse }) {
+  const toast = useToast();
+  const download = useDownloadVideo();
+  const onClick = () =>
+    download.mutate(video.id, {
+      onError: (err) =>
+        toast.error(err instanceof ApiError ? err.message : "Could not download video"),
+    });
+  return (
+    <button
+      onClick={onClick}
+      disabled={download.isPending}
+      title="Download processed MP4"
+      className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-md bg-bg-raised px-3 text-xs font-semibold text-gray-200 hover:text-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {download.isPending ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <Download className="h-3.5 w-3.5" />
+      )}
+      Download MP4
+    </button>
   );
 }
 

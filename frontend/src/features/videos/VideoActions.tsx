@@ -1,7 +1,7 @@
-import { Copy, Pencil, Play, RotateCcw, XCircle } from "lucide-react";
+import { Copy, Download, Loader2, Pencil, Play, RotateCcw, XCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "../../components/Toast";
-import { useCancelVideo, useRetryVideo } from "../../hooks/useMutations";
+import { useCancelVideo, useDownloadVideo, useRetryVideo } from "../../hooks/useMutations";
 import { ApiError } from "../../lib/apiClient";
 import type { VideoResponse } from "../../types/api";
 
@@ -16,11 +16,21 @@ export function VideoActions({ video, onRename }: Props) {
   const toast = useToast();
   const retry = useRetryVideo();
   const cancel = useCancelVideo();
+  const download = useDownloadVideo();
 
   const canPlay = video.status === "ready";
   const canRetry = video.status === "failed";
   const canCancel =
     video.status === "uploading" || video.status === "uploaded" || video.status === "failed";
+  const canDownload = video.status === "ready" && Boolean(video.download);
+
+  const handleDownload = () =>
+    download.mutate(video.id, {
+      onError: (err) => {
+        const msg = err instanceof ApiError ? err.message : "Could not download video";
+        toast.error(msg);
+      },
+    });
 
   const handle = (mutate: typeof retry, verb: string) =>
     mutate.mutate(video.id, {
@@ -71,6 +81,20 @@ export function VideoActions({ video, onRename }: Props) {
           title="Cancel"
         >
           <XCircle className="h-4 w-4" />
+        </button>
+      )}
+      {canDownload && (
+        <button
+          className={btn}
+          onClick={handleDownload}
+          disabled={download.isPending}
+          title="Download MP4"
+        >
+          {download.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Download className="h-4 w-4" />
+          )}
         </button>
       )}
       <button className={btn} onClick={onRename} title="Rename">

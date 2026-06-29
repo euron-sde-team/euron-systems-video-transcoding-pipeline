@@ -2,6 +2,7 @@ import { request } from "../lib/apiClient";
 import type {
   CompleteUploadResponse,
   CreateUploadResponse,
+  DownloadResponse,
   PlaybackTokenResponse,
   VideoListResponse,
   VideoResponse,
@@ -68,4 +69,9 @@ export function mintPlaybackToken(
     method: "POST",
     body: { userId, ttlSeconds },
   });
+}
+
+/** Mint a short-lived signed URL for the processed downloadable MP4. */
+export function getDownloadUrl(id: string): Promise<DownloadResponse> {
+  return request<DownloadResponse>(`/videos/${id}/download`);
 }
