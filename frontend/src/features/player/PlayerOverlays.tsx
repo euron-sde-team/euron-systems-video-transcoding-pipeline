@@ -1,5 +1,5 @@
 import { AlertTriangle, Loader2, Play, RotateCcw } from "lucide-react";
-import type { PlayerError } from "./useShakaPlayer";
+import type { PlayerError } from "./useHlsPlayer";
 
 /** Centered buffering spinner. */
 export function Spinner() {
@@ -48,7 +48,7 @@ export function ErrorOverlay({ error, onRetry }: { error: PlayerError; onRetry: 
       <AlertTriangle className="h-10 w-10 text-rose-400" />
       <p className="max-w-sm text-sm text-gray-200">{error.message}</p>
       {error.code != null && (
-        <p className="text-xs text-gray-500">Shaka error code {error.code}</p>
+        <p className="text-xs text-gray-500">Player error code {error.code}</p>
       )}
       <button
         onClick={onRetry}

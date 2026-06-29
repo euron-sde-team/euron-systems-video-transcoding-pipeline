@@ -205,6 +205,10 @@ export function VideoPlayer({
       )}
       onPointerMove={nudge}
       onMouseLeave={() => !state.paused && nudge()}
+      // Suppress the native right-click menu (removes "Save Video Frame As" on the
+      // hls.js path; on iPhone-native it hides the long-press media menu). Deterrent
+      // only: the real anti-download lever is routing non-iPhone to hls.js (blob src).
+      onContextMenu={(e) => e.preventDefault()}
     >
       <video
         ref={videoRef}

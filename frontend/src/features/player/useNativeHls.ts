@@ -2,29 +2,30 @@ import { type RefObject, useCallback, useEffect, useState } from "react";
 import type { PlayerError } from "./useHlsPlayer";
 
 /**
- * Native AES-128 HLS playback for Safari/iOS, which have no ClearKey CDM (only
- * FairPlay) and so cannot use the Shaka/cbcs path. Safari plays `METHOD=AES-128`
- * HLS natively via a plain <video src>; these hooks own that path while the
- * VideoPlayer keeps rendering its own custom controls off the raw <video>.
+ * Native AES-128 HLS playback for iPhone/iPod, where hls.js's Managed-Media-Source
+ * path is unreliable (hls.js's own docs recommend native HLS there). Safari plays
+ * `METHOD=AES-128` HLS natively via a plain <video src>; these hooks own that path
+ * while the VideoPlayer keeps rendering its own custom controls off the raw <video>.
  */
 
 /**
- * The path selector: true only on Apple WebKit (Safari macOS + iOS WebKit browsers),
- * where Shaka's ClearKey/MSE path can't work, so we use the native AES-128 source.
- * Everything else (Chrome/Firefox/Edge/Android) keeps the Shaka/cbcs path and its
- * caption + scrub-thumbnail tracks.
+ * Path selector: use the native <video> AES-128 HLS source ONLY on iPhone/iPod.
  *
- * We gate on Apple WebKit, NOT a bare capability probe, because BOTH naive signals
- * give false positives: ClearKey-EME probes resolve on Safari (would route Safari to
- * Shaka -> stall), and `canPlayType('application/vnd.apple.mpegurl')` is non-empty on
- * some Chrome builds (would route Chrome to native -> lose Shaka captions/thumbnails).
- * Desktop Chrome/Edge/Android contain "AppleWebKit" in their UA too, so we exclude
- * them explicitly; iOS browsers (CriOS/FxiOS/etc.) are WebKit and correctly stay native.
+ * Everything else — Chrome/Firefox/Edge/Android AND macOS Safari + iPadOS — routes to
+ * hls.js (MSE). On macOS/iPadOS Safari this is DELIBERATE, not just a fallback: hls.js
+ * feeds an in-memory blob to <video>, so Safari exposes no downloadable URL (no native
+ * "Download Video"/"Copy Video Address" right-click). Native HLS, by contrast, hands
+ * Safari a saveable m3u8 the viewer can download + replay (the leak we're closing). The
+ * tradeoff is that hls.js on Safari is less battle-tested than native playback.
+ *
+ * iPhone/iPod is matched explicitly: every iOS browser is WebKit, so CriOS/FxiOS on
+ * iPhone correctly stay native too. iPadOS reports a desktop "Macintosh" UA, so it
+ * naturally falls into the hls.js branch (iPad Safari has full MSE).
  */
 export function canPlayNativeHls(): boolean {
   const ua = navigator.userAgent;
-  const appleWebKit = /AppleWebKit/.test(ua) && !/Chrome|Chromium|Android/i.test(ua);
-  if (!appleWebKit) return false;
+  const isIPhone = /iPhone|iPod/.test(ua);
+  if (!isIPhone) return false;
   const v = document.createElement("video");
   return v.canPlayType("application/vnd.apple.mpegurl") !== "";
 }
