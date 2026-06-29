@@ -1,10 +1,12 @@
-import { Film, RefreshCw, UploadCloud } from "lucide-react";
+import { Film, HardDrive, Loader2, RefreshCw, UploadCloud } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ConfigBanner } from "../../components/ConfigBanner";
 import { Pagination } from "../../components/Pagination";
 import { useSettings } from "../../hooks/useSettings";
 import { useVideos } from "../../hooks/useVideos";
+import { useVideosStorage } from "../../hooks/useVideosStorage";
 import { ApiError } from "../../lib/apiClient";
+import { formatBytes } from "../../lib/format";
 import type { VideoStatus } from "../../types/api";
 import { StatusFilter } from "./StatusFilter";
 import { VideoCard } from "./VideoCard";
@@ -30,6 +32,10 @@ export function VideosPage() {
     status,
   });
 
+  // Live R2 sizing: only READY videos have a finished output tree to measure.
+  const readyIds = (data?.videos ?? []).filter((v) => v.status === "ready").map((v) => v.id);
+  const storage = useVideosStorage(readyIds);
+
   return (
     <div className="px-6 py-6">
       <ConfigBanner />
@@ -37,6 +43,21 @@ export function VideosPage() {
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <StatusFilter value={status} onChange={(s) => patchParams({ status: s, page: "" })} />
         <div className="flex items-center gap-2">
+          {data && (
+            <div
+              className="flex items-center gap-1.5 rounded-md border border-border bg-bg-subtle px-3 py-2 text-xs"
+              title="Live R2 usage (ListObjectsV2) for the ready videos on this page, then the tenant-wide cached total across all videos."
+            >
+              <HardDrive className="h-3.5 w-3.5 text-gray-500" />
+              <span className="text-gray-500">R2 usage</span>
+              {storage.isFetching && readyIds.length > 0 ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-500" />
+              ) : (
+                <span className="font-semibold text-gray-200">{formatBytes(storage.total)}</span>
+              )}
+              <span className="text-gray-600">/ {formatBytes(data.storageBytes)} all</span>
+            </div>
+          )}
           <button
             onClick={() => refetch()}
             className="flex h-9 w-9 items-center justify-center rounded-md border border-border text-gray-400 hover:bg-bg-raised hover:text-gray-100"
@@ -94,7 +115,12 @@ export function VideosPage() {
         <>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {data.videos.map((video) => (
-              <VideoCard key={video.id} video={video} />
+              <VideoCard
+                key={video.id}
+                video={video}
+                r2Bytes={storage.byId.get(video.id)}
+                r2Loading={storage.isFetching}
+              />
             ))}
           </div>
           <Pagination

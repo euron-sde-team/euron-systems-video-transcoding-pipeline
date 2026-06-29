@@ -6,6 +6,7 @@ import type {
   VideoListResponse,
   VideoResponse,
   VideoStatus,
+  VideoStorageResponse,
 } from "../types/api";
 
 export interface ListVideosParams {
@@ -25,6 +26,14 @@ export function listVideos(params: ListVideosParams): Promise<VideoListResponse>
 
 export function getVideo(id: string): Promise<VideoResponse> {
   return request<VideoResponse>(`/videos/${id}`);
+}
+
+/** Batch live R2 footprint for the given video ids (per-video bytes + total). */
+export function getVideosStorage(ids: string[]): Promise<VideoStorageResponse> {
+  return request<VideoStorageResponse>("/videos/storage", {
+    method: "POST",
+    body: { ids },
+  });
 }
 
 export function createUpload(filename: string, title?: string): Promise<CreateUploadResponse> {

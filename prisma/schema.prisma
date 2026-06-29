@@ -74,6 +74,9 @@ model videos {
   source_key    String?
   source_bytes  BigInt?
   output_prefix String?
+  // total bytes of the packaged output tree in the R2 output bucket; set by the
+  // worker at upload time (uploadOutputTree already sums it). Null until ready.
+  output_bytes  BigInt?
   orientation   orientation?
 
   // protection / features (additive; defaults reflect "AES now, no DRM")

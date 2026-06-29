@@ -24,6 +24,7 @@ export type videos = {
     source_key: string | null;
     source_bytes: string | null;
     output_prefix: string | null;
+    output_bytes: string | null;
     orientation: orientation | null;
     protection: Generated<protection_mode>;
     watermark: Generated<watermark_mode>;

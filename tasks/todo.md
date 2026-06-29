@@ -162,3 +162,62 @@ Four changes shipped together (see `docs/safari-aes-hls-and-pipeline-improvement
       a Safari/iOS check (native playback + caption sync) + confirm Chrome cbcs path still plays.
 - [ ] Re-transcode existing videos (reset row to `status='uploaded'`) to populate the new trees.
 - [ ] **Flag for Raushan: ROTATE the pasted dev + prod AWS keys (exposed in transcript).**
+
+---
+
+# Dashboard: R2 key + tenant id on card + total output-bucket usage (June 2026)
+
+**Goal:** surface the R2 bucket key (`output_prefix`) and tenant id on each video card, and show
+the total space the tenant's processed assets occupy in the R2 OUTPUT bucket.
+
+**Key fact:** `uploadOutputTree()` (worker/r2.ts) already SUMS output bytes but returns only the file
+count. So output size is free at write time, no R2 LIST needed. Persist it in a new `output_bytes`
+column (the [store-computed-fields-at-write-time] principle). `output_prefix` already exists per row.
+
+## Backend
+- [ ] schema.prisma: add `output_bytes BigInt?` to `videos`
+- [ ] docs/migrations/0002_output_bytes.sql: `ALTER TABLE videos ADD COLUMN IF NOT EXISTS output_bytes bigint;` (DEV RUNS THIS)
+- [ ] npx prisma generate (regenerate Kysely types — only allowed Prisma cmd)
+- [ ] worker/r2.ts: `uploadOutputTree` returns `{ fileCount, bytes }`
+- [ ] worker/pipeline.ts: capture bytes -> `PipelineOutcome.outputBytes`
+- [ ] worker/index.ts: pass `outcome.outputBytes` to `markReady`
+- [ ] db/queue.ts: `markReady(..., outputBytes)` persists `output_bytes`
+- [ ] repositories/videos.repository.ts: `sumOutputBytesByTenant(tenantId)`; return from `listByTenant`
+- [ ] services/videos.service.ts: DTO gains `outputPrefix` + `outputBytes`; list returns `storageBytes`
+
+## Frontend
+- [ ] types/api.ts: `VideoResponse.outputPrefix/outputBytes`, `VideoListResponse.storageBytes`
+- [ ] features/videos/VideoCard.tsx: footer shows R2 key + tenant id (+ output size)
+- [ ] features/videos/VideosPage.tsx: header shows aggregate output storage
+
+## Verify
+- [x] backend type-check + lint + build (clean)
+- [x] frontend type-check + lint (clean)
+
+## Review (done)
+- Schema: `videos.output_bytes BigInt?` added; migration `0002_output_bytes.sql` (DEV must run it).
+- `npx prisma generate` ran -> `output_bytes: string | null` in db/types.ts.
+- Worker: `uploadOutputTree` now returns `{ fileCount, bytes }`; pipeline -> outcome.outputBytes
+  -> `markReady(..., outputBytes)` persists it (raw-SQL number bind).
+- Repo: `sumOutputBytesByTenant` (NULLs -> 0); listByTenant returns `storageBytes` (tenant-wide,
+  NOT scoped by the status filter).
+- Service DTO: `outputPrefix` + `outputBytes`; list returns `storageBytes`.
+- Frontend: card footer shows copyable R2 key + tenant id + per-video R2 size; page header shows
+  tenant-wide "Output storage".
+- DECISION LEFT TO OPERATOR: legacy ready videos (pre-column) show 0 R2 size until reprocessed.
+
+## Follow-up: live batch R2 LIST sizing (user: "Keep column AND add LIST")
+Adds an authoritative LIVE read alongside the cached column (legacy videos now measured too).
+- Backend:
+  - r2-read.service.ts: `sumPrefixBytes(prefix)` paginates ListObjectsV2, sums Size.
+  - videos.repository.ts: `findByIdsForTenant(ids, tenantId)` (batch prefix lookup).
+  - videos.service.ts: `getR2StorageForVideos(tenantId, ids)` -> mapPool(8) over prefixes ->
+    `{ items:[{id,bytes}], total }`; caps batch at 100.
+  - controller `getVideosStorage` + route `POST /videos/storage` (before /:id; service auth).
+- Frontend:
+  - api `getVideosStorage`, hook `useVideosStorage` (key=sorted ids, staleTime 5m -> 4s poll
+    never re-LISTs since R2 output is immutable once ready).
+  - VideosPage: LISTs only READY page ids; header chip "R2 usage <live page total> / <cached
+    tenant total> all"; passes `r2Bytes`/`r2Loading` per card.
+  - VideoCard: prefers live `r2Bytes`, falls back to cached `outputBytes`, spinner while loading.
+- Verify: backend type-check+lint+build clean; frontend type-check+lint+build clean.

@@ -1,4 +1,4 @@
-import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import config from "../config";
 
 // API-side R2 reader (R2 is S3-compatible). The worker writes the output tree;
@@ -23,4 +23,31 @@ export const getObjectText = async (key: string): Promise<string | null> => {
     if ((err as { name?: string }).name === "NoSuchKey") return null;
     throw err;
   }
+};
+
+/**
+ * Sum the sizes of every object under an R2 key prefix (a video's output tree),
+ * the LIVE footprint as it actually sits in the output bucket. Paginates
+ * ListObjectsV2 (1000/page). Returns 0 for an empty/absent prefix.
+ *
+ * This is the authoritative read for "space used in R2", it works for legacy
+ * videos that predate the cached output_bytes column. Output is immutable once a
+ * video is ready, so callers should cache the result rather than re-list often.
+ */
+export const sumPrefixBytes = async (prefix: string): Promise<number> => {
+  const normalized = prefix.replace(/\/+$/, "") + "/";
+  let total = 0;
+  let token: string | undefined;
+  do {
+    const out = await r2.send(
+      new ListObjectsV2Command({
+        Bucket: config.R2_BUCKET,
+        Prefix: normalized,
+        ContinuationToken: token,
+      })
+    );
+    for (const obj of out.Contents ?? []) total += obj.Size ?? 0;
+    token = out.IsTruncated ? out.NextContinuationToken : undefined;
+  } while (token);
+  return total;
 };

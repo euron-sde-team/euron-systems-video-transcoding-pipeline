@@ -19,6 +19,8 @@ import { uploadOutputTree } from "./r2";
 
 export interface PipelineOutcome {
   captionsLangs: string[];
+  /** Total bytes of the packaged output tree uploaded to the R2 output bucket. */
+  outputBytes: number;
 }
 
 interface PipelineConfig {
@@ -133,9 +135,9 @@ export const transcodePipeline = async (
     // ── 5. uploading_output → R2 ──
     await hb.update("uploading_output", 90);
     const outputPrefix = video.output_prefix ?? `${video.tenant_id}/${video.id}`;
-    await uploadOutputTree(outputDir, outputPrefix);
+    const { bytes: outputBytes } = await uploadOutputTree(outputDir, outputPrefix);
 
-    return { captionsLangs: captions ? [captions.lang] : [] };
+    return { captionsLangs: captions ? [captions.lang] : [], outputBytes };
   } finally {
     await rm(jobDir, { recursive: true, force: true }).catch(() => {
       /* best-effort cleanup */

@@ -61,12 +61,25 @@ async function mapPool<T>(items: T[], limit: number, fn: (item: T) => Promise<vo
   await Promise.all(workers);
 }
 
+/** Result of an output-tree upload: how many files and how many total bytes landed in R2. */
+export interface UploadOutputResult {
+  fileCount: number;
+  /** Total size of the packaged output tree in the R2 output bucket. */
+  bytes: number;
+}
+
 /**
  * Upload the entire packaged output tree to R2 under `{outputPrefix}/...`.
  * EC2→R2 is the billed egress hop (constraint #11), so this is the only place
  * bytes leave AWS, keep the ladder disciplined upstream, not here.
+ *
+ * Returns the byte total (already summed here for logging) so the caller can
+ * persist it as the video's output-bucket footprint, no R2 LIST needed later.
  */
-export const uploadOutputTree = async (outputDir: string, outputPrefix: string): Promise<number> => {
+export const uploadOutputTree = async (
+  outputDir: string,
+  outputPrefix: string
+): Promise<UploadOutputResult> => {
   const files = await walk(outputDir);
   let bytes = 0;
 
@@ -88,5 +101,5 @@ export const uploadOutputTree = async (outputDir: string, outputPrefix: string):
   });
 
   logger.info(`[r2] uploaded ${files.length} files (${bytes} bytes) → ${outputPrefix}/`);
-  return files.length;
+  return { fileCount: files.length, bytes };
 };

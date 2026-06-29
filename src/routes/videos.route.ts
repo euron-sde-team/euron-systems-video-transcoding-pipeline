@@ -5,6 +5,7 @@ import {
   createUpload,
   getDownload,
   getVideo,
+  getVideosStorage,
   listVideos,
   mintPlaybackToken,
   renameVideo,
@@ -20,6 +21,9 @@ const router = Router();
 // ─── Management API (service-to-service auth) ────────────────────────────────
 router.post("/uploads", asyncHandler(requireServiceAuth), asyncHandler(createUpload));
 router.get("/", asyncHandler(requireServiceAuth), asyncHandler(listVideos));
+// Batch live R2 storage for the dashboard's visible cards. Registered before
+// "/:id" so the static "storage" segment is never captured as an id.
+router.post("/storage", asyncHandler(requireServiceAuth), asyncHandler(getVideosStorage));
 router.get("/:id", asyncHandler(requireServiceAuth), asyncHandler(getVideo));
 router.patch("/:id", asyncHandler(requireServiceAuth), asyncHandler(renameVideo));
 router.post("/:id/complete", asyncHandler(requireServiceAuth), asyncHandler(completeUpload));

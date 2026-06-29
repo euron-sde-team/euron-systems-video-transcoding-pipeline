@@ -53,6 +53,10 @@ export interface VideoResponse {
   allowOffline: boolean;
   captionsLangs: string[];
   sourceBytes: number | null;
+  /** R2 output-bucket key prefix for this video's assets ("{tenantId}/{id}"). */
+  outputPrefix: string;
+  /** Total bytes this video's assets occupy in the R2 output bucket; null until ready. */
+  outputBytes: number | null;
   error: string | null;
   createdAt: string;
   updatedAt: string;
@@ -67,6 +71,20 @@ export interface VideoListResponse {
   total: number;
   page: number;
   limit: number;
+  /** Tenant-wide total bytes in the R2 output bucket (sum of ready videos). */
+  storageBytes: number;
+}
+
+/** One video's LIVE R2 footprint (sum of objects under its output prefix). */
+export interface VideoStorageItem {
+  id: string;
+  bytes: number;
+}
+
+/** Batch live R2 storage for a set of videos (the visible dashboard cards). */
+export interface VideoStorageResponse {
+  items: VideoStorageItem[];
+  total: number;
 }
 
 export interface PresignedUpload {

@@ -74,16 +74,17 @@ export const releaseClaim = async (id: string, workerId: string): Promise<void> 
   `.execute(db);
 };
 
-/** MARK READY: terminal success. */
+/** MARK READY: terminal success. `outputBytes` is the R2 output-tree footprint. */
 export const markReady = async (
   id: string,
   workerId: string,
-  captionsLangs: string[]
+  captionsLangs: string[],
+  outputBytes: number
 ): Promise<void> => {
   await sql`
     UPDATE videos SET
       status='ready', stage=NULL, progress=100,
-      captions_langs=${sql.val(captionsLangs)}, error=NULL,
+      captions_langs=${sql.val(captionsLangs)}, output_bytes=${outputBytes}, error=NULL,
       ready_at=now(), updated_at=now()
     WHERE id=${id} AND locked_by=${workerId} AND status='processing'
   `.execute(db);

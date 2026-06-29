@@ -10,7 +10,25 @@ import { UnprocessableError } from "../errors/unprocessable.error";
 import videosRepository, { type VideoRow } from "../repositories/videos.repository";
 import { ALLOWED_UPLOAD_EXT, OUTPUT_FILES, processedDownloadKey } from "../utils/const";
 import playbackTokenService from "./playback-token.service";
+import { sumPrefixBytes } from "./r2-read.service";
 import s3UploadService from "./s3-upload.service";
+
+/** Max ids accepted per batch storage request (bounds the fan-out of R2 LISTs). */
+const MAX_STORAGE_BATCH = 100;
+
+/** Bounded-concurrency map that collects results in input order. */
+async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) {
+      const idx = i++;
+      results[idx] = await fn(items[idx] as T);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
 
 export interface VideoResponse {
   id: string;
@@ -28,6 +46,10 @@ export interface VideoResponse {
   allowOffline: boolean;
   captionsLangs: string[];
   sourceBytes: number | null;
+  /** R2 output-bucket key prefix for this video's assets ({tenant_id}/{id}). */
+  outputPrefix: string;
+  /** Total bytes this video's assets occupy in the R2 output bucket; null until ready. */
+  outputBytes: number | null;
   error: string | null;
   createdAt: string;
   updatedAt: string;
@@ -76,6 +98,8 @@ function toVideoResponse(row: VideoRow): VideoResponse {
     allowOffline: Boolean(row.allow_offline),
     captionsLangs: row.captions_langs ?? [],
     sourceBytes: parseBigInt(row.source_bytes),
+    outputPrefix: prefix,
+    outputBytes: parseBigInt(row.output_bytes),
     error: row.error ?? null,
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
@@ -158,6 +182,30 @@ class VideosService {
   }
 
   /**
+   * LIVE per-video R2 footprint for a batch of videos (the dashboard's visible
+   * cards). Resolves each id's output_prefix (tenant-scoped) then sums the R2
+   * objects under it via batched ListObjectsV2. Authoritative (works for legacy
+   * videos with no output_bytes), at the cost of R2 LIST calls, so the frontend
+   * caches the result (output is immutable once ready). Unknown ids are dropped.
+   */
+  async getR2StorageForVideos(
+    tenantId: string,
+    ids: string[]
+  ): Promise<{ items: { id: string; bytes: number }[]; total: number }> {
+    const unique = [...new Set(ids.filter(Boolean))].slice(0, MAX_STORAGE_BATCH);
+    if (unique.length === 0) return { items: [], total: 0 };
+
+    const rows = await videosRepository.findByIdsForTenant(unique, tenantId);
+    const items = await mapPool(rows, 8, async (row) => {
+      const prefix = row.output_prefix ?? `${tenantId}/${row.id}`;
+      const bytes = await sumPrefixBytes(prefix);
+      return { id: row.id, bytes };
+    });
+    const total = items.reduce((sum, it) => sum + it.bytes, 0);
+    return { items, total };
+  }
+
+  /**
    * Resolve the R2 output prefix for a READY video. Used by the AES-128 HLS
    * manifest routes (which fetch + rewrite the stored playlists per request).
    */
@@ -196,7 +244,14 @@ class VideosService {
   async listVideos(
     tenantId: string,
     params: { status?: string; page?: number; limit?: number }
-  ): Promise<{ videos: VideoResponse[]; total: number; page: number; limit: number }> {
+  ): Promise<{
+    videos: VideoResponse[];
+    total: number;
+    page: number;
+    limit: number;
+    /** Tenant-wide total bytes in the R2 output bucket (sum of ready videos). */
+    storageBytes: number;
+  }> {
     const result = await videosRepository.listByTenant(tenantId, params);
     return { ...result, videos: result.videos.map(toVideoResponse) };
   }

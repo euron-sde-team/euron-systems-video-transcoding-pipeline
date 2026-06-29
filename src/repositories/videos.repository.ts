@@ -80,6 +80,18 @@ class VideosRepository {
     return row ?? null;
   }
 
+  /** Batch fetch (tenant-scoped). Used to resolve output_prefix for live R2 sizing. */
+  async findByIdsForTenant(ids: string[], tenantId: string): Promise<VideoRow[]> {
+    if (ids.length === 0) return [];
+    const rows = await db
+      .selectFrom("videos")
+      .selectAll()
+      .where("tenant_id", "=", tenantId)
+      .where("id", "in", ids)
+      .execute();
+    return rows as VideoRow[];
+  }
+
   /** In-flight count = uploads not yet terminal. Gates the per-tenant cap. */
   async countInFlight(tenantId: string): Promise<number> {
     const row = await db
@@ -114,7 +126,13 @@ class VideosRepository {
   async listByTenant(
     tenantId: string,
     params: ListParams
-  ): Promise<{ videos: VideoRow[]; total: number; page: number; limit: number }> {
+  ): Promise<{
+    videos: VideoRow[];
+    total: number;
+    page: number;
+    limit: number;
+    storageBytes: number;
+  }> {
     const page = Math.max(1, params.page ?? 1);
     const limit = Math.min(100, Math.max(1, params.limit ?? 20));
     const offset = (page - 1) * limit;
@@ -132,9 +150,12 @@ class VideosRepository {
       countQuery = countQuery.where("status", "=", params.status as any);
     }
 
-    const [rows, countRow] = await Promise.all([
+    const [rows, countRow, storageBytes] = await Promise.all([
       listQuery.orderBy("created_at", "desc").limit(limit).offset(offset).execute(),
       countQuery.executeTakeFirst(),
+      // Tenant-wide total, NOT scoped by the status filter, the storage figure
+      // should reflect everything occupying the output bucket regardless of view.
+      this.sumOutputBytesByTenant(tenantId),
     ]);
 
     return {
@@ -142,7 +163,24 @@ class VideosRepository {
       total: Number(countRow?.n ?? 0),
       page,
       limit,
+      storageBytes,
     };
+  }
+
+  /**
+   * Total bytes the tenant's processed assets occupy in the R2 output bucket.
+   * Only 'ready' rows ever carry output_bytes (set in markReady); NULLs are
+   * ignored by SUM, so legacy pre-column videos count as 0 until reprocessed.
+   * pg returns SUM(bigint) as a string, parse before returning.
+   */
+  async sumOutputBytesByTenant(tenantId: string): Promise<number> {
+    const row = await db
+      .selectFrom("videos")
+      .select((eb) => eb.fn.sum<string>("output_bytes").as("total"))
+      .where("tenant_id", "=", tenantId)
+      .executeTakeFirst();
+    const total = row?.total;
+    return total == null ? 0 : typeof total === "string" ? parseInt(total, 10) : Number(total);
   }
 
   /** RETRY: failed → uploaded, resetting attempts so the worker reprocesses it. */

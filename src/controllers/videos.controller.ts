@@ -39,6 +39,16 @@ export const listVideos = async (req: Request, res: Response) => {
   sendSuccessResponse({ res, data: result, statusCode: HttpSuccessStatus.OK, message: "Videos retrieved" });
 };
 
+/** Batch LIVE R2 footprint for a set of video ids (the visible dashboard cards). */
+export const getVideosStorage = async (req: Request, res: Response) => {
+  const tenantId = getTenantId(req);
+  const raw = req.body?.ids;
+  if (!Array.isArray(raw)) throw new BadRequestError("ids must be an array");
+  const ids = raw.map((x: unknown) => String(x));
+  const result = await videosService.getR2StorageForVideos(tenantId, ids);
+  sendSuccessResponse({ res, data: result, statusCode: HttpSuccessStatus.OK, message: "Storage computed" });
+};
+
 export const retryVideo = async (req: Request, res: Response) => {
   const tenantId = getTenantId(req);
   const result = await videosService.retry(tenantId, req.params.id as string);

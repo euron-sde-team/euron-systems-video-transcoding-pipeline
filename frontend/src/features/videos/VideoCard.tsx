@@ -1,5 +1,4 @@
-import clsx from "clsx";
-import { Captions, Check, Film, Loader2, RectangleHorizontal, RectangleVertical, Square, X } from "lucide-react";
+import { Captions, Check, Copy, Film, HardDrive, Loader2, RectangleHorizontal, RectangleVertical, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { StageProgress } from "../../components/StageProgress";
@@ -89,10 +88,53 @@ function RenameRow({ video, onDone }: { video: VideoResponse; onDone: () => void
   );
 }
 
-export function VideoCard({ video }: { video: VideoResponse }) {
+/** Label + truncated mono value + copy button. For long ids (R2 key, tenant id). */
+function CopyableMeta({ label, value }: { label: string; value: string }) {
+  const toast = useToast();
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      toast.error("Copy failed");
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="w-12 shrink-0 text-[10px] uppercase tracking-wide text-gray-600">{label}</span>
+      <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-gray-400" title={value}>
+        {value}
+      </code>
+      <button
+        onClick={copy}
+        className="shrink-0 text-gray-600 transition-colors hover:text-gray-300"
+        title={`Copy ${label}`}
+      >
+        {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+      </button>
+    </div>
+  );
+}
+
+export function VideoCard({
+  video,
+  r2Bytes,
+  r2Loading,
+}: {
+  video: VideoResponse;
+  /** Live R2 footprint from the batch LIST; falls back to the cached column value. */
+  r2Bytes?: number;
+  r2Loading?: boolean;
+}) {
   const [renaming, setRenaming] = useState(false);
   const OrientationIcon = video.orientation ? ORIENTATION_ICON[video.orientation] : null;
   const isReady = video.status === "ready";
+  // Prefer the live LIST result; show the cached output_bytes instantly while it loads.
+  const r2 = r2Bytes ?? video.outputBytes;
 
   return (
     <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-bg-subtle transition-colors hover:border-gray-600">
@@ -140,9 +182,24 @@ export function VideoCard({ video }: { video: VideoResponse }) {
           <span>{formatRelativeTime(video.createdAt)}</span>
         </div>
 
-        <div className={clsx("mt-auto flex items-center justify-between border-t border-border/60 pt-2.5")}>
-          <span className="font-mono text-[11px] text-gray-600">{video.id.slice(0, 8)}</span>
-          <VideoActions video={video} onRename={() => setRenaming(true)} />
+        <div className="mt-auto space-y-1.5 border-t border-border/60 pt-2.5">
+          <CopyableMeta label="R2 key" value={video.outputPrefix} />
+          <CopyableMeta label="Tenant" value={video.tenantId} />
+          <div className="flex items-center justify-between pt-0.5">
+            <span className="flex items-center gap-1 text-[11px] text-gray-500" title="Live space used in the R2 output bucket">
+              {isReady && r2 != null ? (
+                <>
+                  <HardDrive className="h-3 w-3" />
+                  {formatBytes(r2)}
+                </>
+              ) : isReady && r2Loading ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <span className="font-mono text-gray-600">{video.id.slice(0, 8)}</span>
+              )}
+            </span>
+            <VideoActions video={video} onRename={() => setRenaming(true)} />
+          </div>
         </div>
       </div>
     </div>
