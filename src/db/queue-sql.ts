@@ -1,5 +1,5 @@
 // Raw queue SQL as plain strings. NO imports, so the Lambda orchestrator can
-// reuse REAP_SQL/COUNT_UPLOADED_SQL with its own per-invocation pg client
+// reuse REAP_SQL/COUNT_OUTSTANDING_SQL with its own per-invocation pg client
 // WITHOUT pulling in db/connection's module-scope pool (Lambda connection
 // hygiene, constraint #12).
 
@@ -14,5 +14,14 @@ export const REAP_SQL = `
     AND (heartbeat_at < now() - interval '10 minutes' OR locked_at < now() - interval '6 hours')
 `;
 
-/** Backlog size, the only scale-up signal (scale on 'uploaded' only, constraint #6). */
-export const COUNT_UPLOADED_SQL = "SELECT count(*)::int AS n FROM videos WHERE status='uploaded'";
+/**
+ * Outstanding work = the scale-up signal. Counts videos that still need a worker
+ * slot: 'uploaded' (waiting for one) + 'processing' (already have one). Counting
+ * BOTH keeps this numerator in the SAME unit as `running` (all workers, busy ones
+ * included), so a busy worker is not double-subtracted from `desired`. Scaling on
+ * 'uploaded' alone undercounted: a claimed job leaves the queue while its worker
+ * still counts as running, so each busy worker suppressed DIVISOR items before the
+ * next launch (supersedes the old 'uploaded'-only signal).
+ */
+export const COUNT_OUTSTANDING_SQL =
+  "SELECT count(*)::int AS n FROM videos WHERE status IN ('uploaded','processing')";

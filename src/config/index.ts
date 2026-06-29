@@ -80,7 +80,10 @@ const config = {
 
   // ─── Orchestrator (Lambda) ─────────────────────────────────────────────────
   MAX_WORKERS: Number(process.env.MAX_WORKERS ?? "20"),
-  DIVISOR: Number(process.env.DIVISOR ?? "2"),
+  // Videos each worker is expected to absorb. 1 = one worker per OUTSTANDING video
+  // (uploaded + processing), up to MAX_WORKERS, so queued videos transcode in
+  // parallel instead of waiting behind an in-flight job. Raise to batch more/worker.
+  DIVISOR: Number(process.env.DIVISOR ?? "1"),
   LAUNCH_TEMPLATE_NAME: process.env.LAUNCH_TEMPLATE_NAME ?? "transcoder",
   LAUNCH_TEMPLATE_VERSION: process.env.LAUNCH_TEMPLATE_VERSION ?? "$Latest",
   WORKER_INSTANCE_TYPE: process.env.WORKER_INSTANCE_TYPE ?? "c7g.xlarge",

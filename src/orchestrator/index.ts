@@ -1,12 +1,12 @@
 import { Client } from "pg";
 import config from "../config";
-import { COUNT_UPLOADED_SQL, REAP_SQL } from "../db/queue-sql";
+import { COUNT_OUTSTANDING_SQL, REAP_SQL } from "../db/queue-sql";
 import logger from "../utils/logger";
 import { countRunningWorkers, launchWorkers } from "./ec2";
 
 export interface OrchestratorResult {
   reaped: number;
-  backlog: number;
+  outstanding: number;
   running: number;
   desired: number;
   toLaunch: number;
@@ -30,9 +30,14 @@ const getClient = (): Client => {
 
 /**
  * EventBridge cron (every 1 min). The "brain": reap dead jobs, then scale UP only.
- *   desired  = min(MAX_WORKERS, ceil(backlog / DIVISOR))   // DIVISOR = latency dial
- *   toLaunch = max(0, desired - running)
- * Never terminates instances, workers self-terminate on an empty queue.
+ *   outstanding = count(status IN ('uploaded','processing'))      // work that needs a worker
+ *   desired     = min(MAX_WORKERS, ceil(outstanding / DIVISOR))   // DIVISOR = videos per worker
+ *   toLaunch    = max(0, desired - running)
+ * `outstanding` counts in-flight jobs so it shares units with `running` (all
+ * workers, busy ones included); that stops a busy worker from being double-
+ * subtracted from `desired`. With DIVISOR=1 this is one worker per outstanding
+ * video, capped by MAX_WORKERS. Never terminates instances, workers self-terminate
+ * on an empty queue.
  */
 export const handler = async (): Promise<OrchestratorResult> => {
   const db = getClient();
@@ -41,21 +46,21 @@ export const handler = async (): Promise<OrchestratorResult> => {
     const reapRes = await db.query(REAP_SQL);
     const reaped = reapRes.rowCount ?? 0;
 
-    const countRes = await db.query<{ n: number }>(COUNT_UPLOADED_SQL);
-    const backlog = countRes.rows[0]?.n ?? 0;
+    const countRes = await db.query<{ n: number }>(COUNT_OUTSTANDING_SQL);
+    const outstanding = countRes.rows[0]?.n ?? 0;
 
     const running = await countRunningWorkers();
-    const desired = Math.min(config.MAX_WORKERS, Math.ceil(backlog / config.DIVISOR));
+    const desired = Math.min(config.MAX_WORKERS, Math.ceil(outstanding / config.DIVISOR));
     const toLaunch = Math.max(0, desired - running);
 
     logger.info(
-      `[orchestrator] reaped=${reaped} backlog=${backlog} running=${running} ` +
+      `[orchestrator] reaped=${reaped} outstanding=${outstanding} running=${running} ` +
         `desired=${desired} toLaunch=${toLaunch}`
     );
 
     if (toLaunch > 0) await launchWorkers(toLaunch);
 
-    return { reaped, backlog, running, desired, toLaunch };
+    return { reaped, outstanding, running, desired, toLaunch };
   } finally {
     await db.end();
   }

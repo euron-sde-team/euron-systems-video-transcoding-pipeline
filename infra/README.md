@@ -54,10 +54,10 @@ is hardcoded in each file; the bootstrap IS the user-data, not baked into the AM
 ## Scaling math (what the cron does each minute)
 ```
 reap dead 'processing' rows (>10m no heartbeat, or >6h locked)
-backlog  = count(status='uploaded')
-running  = DescribeInstances(tag:role=transcoder, state in {pending,running})   # NOT a DB table
-desired  = min(MAX_WORKERS, ceil(backlog / DIVISOR))
-launch   = max(0, desired - running)                                            # scale UP only
+outstanding = count(status in {'uploaded','processing'})                        # uploaded (waiting) + processing (in-flight)
+running     = DescribeInstances(tag:role=transcoder, state in {pending,running})  # NOT a DB table
+desired     = min(MAX_WORKERS, ceil(outstanding / DIVISOR))                     # DIVISOR=1 -> one worker per outstanding video
+launch      = max(0, desired - running)                                         # scale UP only
 ```
 Workers drain the queue, then self-terminate after `IDLE_GRACE_MS`. Fleet → 0 within
 `IDLE_GRACE_MS` + one cron cycle.
