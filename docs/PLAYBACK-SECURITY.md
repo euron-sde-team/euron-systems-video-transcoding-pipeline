@@ -290,6 +290,25 @@ What it does NOT protect against (because ClearKey is not hardware DRM):
 This is the deliberate tradeoff: avoid Widevine/FairPlay license cost and complexity, and accept that
 the scheme stops the large majority of casual piracy but not a skilled, entitled user.
 
+### Casual download depends on the PLAYER PATH, not the encryption (confirmed 2026-06-29)
+The same AES-128 stream has very different download exposure depending on how it is played:
+- **Native HLS (Safari/iOS, `<video src="...m3u8">`):** Safari hands the browser the real `.m3u8` URL,
+  so right-click "Download Video" / "Copy Video Address" work, and the saved playlist plays in Apple
+  Music/QuickTime (they fetch the AES key from the `#EXT-X-KEY` URI while the token is valid). A
+  one-click leak, verified on macOS Safari.
+- **hls.js / MSE (Chrome/Firefox/Edge, macOS Safari, iPad):** the source is an in-memory `blob:`, so
+  there is NO downloadable URL — "Download Video"/"Copy Video Address" are absent/greyed (only "Save
+  Video Frame As" = a single screenshot).
+
+So the player routes **only iPhone/iPod to native HLS** and everything else (incl. macOS Safari + iPad)
+to hls.js, to remove the casual desktop-Safari download menu
+(`frontend/src/features/player/useNativeHls.ts → canPlayNativeHls`: only iPhone is matched, because
+hls.js's Managed-Media-Source path on iPhone is unreliable and iPhone has no desktop menu anyway). The
+`<video>` context menu is also suppressed (`onContextMenu preventDefault`). These are deterrents only:
+DevTools / the network tab / `yt-dlp` still pull the `m3u8` + key + segments on any browser. Real
+download + output protection needs hardware DRM (Widevine/PlayReady/FairPlay) — see the upgrade path
+below.
+
 ### Upgrade path to real DRM (no re-encoding)
 
 The `protection_mode` enum (`src/db/enums.ts`) already includes `drm_cbcs`, and the content is

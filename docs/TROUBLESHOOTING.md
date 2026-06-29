@@ -59,6 +59,22 @@ service policy); a CMK needs explicit `kms:Decrypt` (the `<SSM_KMS_KEY_ARN>` sta
 **Fix:** ensure `worker-policy.json`'s `DecryptSecureStrings` resource matches the key used to create
 the params.
 
+### A re-baked PROD worker AMI never claims, but the SAME build worked on the dev builder
+**What happened:** a new prod worker AMI's instances launched, never claimed (video `uploaded`,
+`attempts=0`, no `euron-vod-primary-*` session in the prod RDS), and self-terminated ~60s — while the
+exact same `/opt/euron-vod` build ran fine when smoke-tested on the dev builder. The prod-native old
+AMI worked, so it was the AMI, not the code (`db/connection.ts` unchanged).
+**Why the smoke test lied:** the dev builder reaches the **dev** RDS (same VPC, direct); a prod worker
+must reach the **prod** RDS over **cross-VPC peering**. `node dist/worker/index.js` on the builder
+proves the build *runs* and connects to the *dev* DB — it canNOT detect a prod-RDS-over-peering
+failure. (The exact mechanism of that specific prod-connection failure was never captured: prod
+workers have an egress-only SG, no SSH key, no CloudWatch log group, and empty console output.)
+**Practice:** after any prod worker re-bake, do NOT trust "the build is present." VALIDATE a real prod
+worker actually CLAIMS a job before relying on it — upload a test clip and confirm `videos.attempts > 0`
+(it moved to `processing`), or a `euron-vod-primary-*` row appears in the prod RDS `pg_stat_activity`,
+or the orchestrator logs `backlog` drop to 0. Keep the previous good AMI and roll back via a new
+`$Latest` version (see the launch-template section) if the new one doesn't claim.
+
 ---
 
 ## Transcode / package
@@ -114,9 +130,20 @@ returns its browser-warning interstitial (HTML, 200) instead of forwarding, beca
 **This is not a backend bug** (the response is from ngrok, not the API). Fixes:
 - Dev/web testing: play the **DASH** manifest (`manifest.mpd`) instead of HLS. DASH decrypts via the
   player's clear-key config (fetched from the API key endpoint), with no baked key URI.
-- To test HLS over a tunnel: use a paid / no-interstitial ngrok domain.
+- To test HLS over a tunnel: use a paid / no-interstitial ngrok domain (cloudflared also has none).
+- **Local browser testing (player + API on the same machine):** set
+  `PUBLIC_API_BASE=http://localhost:<port>` and restart the API. The **AES-128 HLS-TS** tree's
+  `#EXT-X-KEY` URI is a placeholder (`EURON_AES_KEY_URI`) rewritten **per request** from
+  `PUBLIC_API_BASE` by `src/controllers/hls.controller.ts`, so this takes effect immediately with **NO
+  re-transcode** — the local browser fetches the key straight from localhost (no interstitial). (Only
+  the cbcs `--hls_key_uri` is baked at packaging time; the AES tree is resolved live, which is why a
+  `PUBLIC_API_BASE` change + API restart is enough — no re-package.)
+- **Native players can't carry the skip header at all.** The native-Safari/iOS `#EXT-X-KEY` fetch
+  and Apple Music/QuickTime cannot send `ngrok-skip-browser-warning`, so ngrok-free can never serve
+  the key to them. ngrok-free is unusable for key delivery to any native player — use localhost (local)
+  or a real/no-interstitial domain (remote).
 - Prod: `PUBLIC_API_BASE` is your real API domain (no interstitial), so the HLS path (and native iOS
-  HLS, which needs the baked URI) works.
+  HLS, which needs the key URI) works.
 
 ### `/key` returns 401 "Invalid service credentials" or "Invalid or expired playback token"
 - Management endpoints need `Authorization: Bearer <SERVICE_API_KEY>` (NOT `PLAYBACK_TOKEN_SECRET`,
@@ -186,6 +213,16 @@ to default; the console renders the **Default** version. The orchestrator uses
 console (and anything resolving `$Default`) lags.
 **Fix:** after creating a new version, set it default for clarity:
 `aws ec2 modify-launch-template --launch-template-id <id> --default-version <n>`.
+
+**Rolling back a bad worker AMI (critical corollary):** because the orchestrator launches `$Latest`,
+`modify-launch-template --default-version <old>` does NOT roll back — workers keep launching the broken
+**newest** version. To actually roll back, **create a NEW version pointing at the old AMI** so it
+becomes `$Latest`:
+`aws ec2 create-launch-template-version --launch-template-id <id> --source-version <good> --launch-template-data '{"ImageId":"<old-ami>"}'`
+(then optionally set it default). Verify with `describe-launch-template-versions --versions '$Latest'`,
+and confirm a freshly launched worker's `ImageId` is the old one. (This bit us hard: a
+`--default-version` "rollback" was a no-op for ~35 min, so the still-broken newest AMI looked like the
+old one and the failure was misdiagnosed as environmental.)
 
 ---
 
