@@ -121,6 +121,15 @@ const config = {
   CAPTIONS_DEFAULT_LANG: process.env.CAPTIONS_DEFAULT_LANG ?? "en",
   FFMPEG_BIN: process.env.FFMPEG_BIN ?? "ffmpeg",
   FFPROBE_BIN: process.env.FFPROBE_BIN ?? "ffprobe",
+  // ─── Processed download MP4 (uploader's "save" file) ───────────────────────
+  // The download is a SEPARATE, size-conscious re-encode of the top rung, NOT a
+  // copy of the ~5 Mbps streaming rung (which produced multi-GB downloads). HEVC
+  // CRF gives a much smaller file at near-identical quality. Swap the codec to
+  // libx264 (and CRF ~23) if the worker's ffmpeg lacks libx265. Preset trades
+  // encode time for size (HEVC SW encode is slow on Graviton, so default "fast").
+  DOWNLOAD_VIDEO_CODEC: process.env.DOWNLOAD_VIDEO_CODEC ?? "libx265",
+  DOWNLOAD_CRF: process.env.DOWNLOAD_CRF ?? "28",
+  DOWNLOAD_PRESET: process.env.DOWNLOAD_PRESET ?? "fast",
   // NOT IN USE (HLS-only migration): Shaka Packager (cbcs CMAF + DASH) is no longer
   // invoked; retained so a future DASH/DRM path can re-enable it.
   SHAKA_PACKAGER_BIN: process.env.SHAKA_PACKAGER_BIN ?? "packager",

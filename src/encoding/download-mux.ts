@@ -5,13 +5,22 @@ import type { Rung } from "./ladder";
 
 /**
  * Produce a single web-optimized, downloadable MP4 (the YouTube-style "processed
- * download" for the uploader). It REMUXES (`-c copy`) the top encoded rung's video
- * with the shared audio into one faststart MP4, no re-encode. The top rung is
- * already efficient H.264 high, so the result is markedly smaller than a typical
- * phone original while staying high-resolution.
+ * download" for the uploader). It RE-ENCODES the top encoded rung's video at a
+ * size-conscious quality target (config.DOWNLOAD_VIDEO_CODEC / DOWNLOAD_CRF /
+ * DOWNLOAD_PRESET; HEVC CRF 28 by default) and COPIES the shared AAC audio into
+ * one faststart MP4.
  *
- * Returns the local path of the muxed file. The caller uploads it to the PRIVATE
- * upload bucket (it is unencrypted full video; it must never hit the public CDN).
+ * Why re-encode (not `-c copy`): the top rung is the STREAMING rung, fixed at
+ * ~5 Mbps regardless of the source's bitrate, so copying it verbatim produced
+ * multi-GB downloads (a 600 MB upload → 2.36 GB). A CRF re-encode decouples the
+ * download from the ladder and roughly thirds the size at near-identical quality.
+ * We re-encode the RUNG (not the original source) on purpose: it is already
+ * display-correct (rotation/scale/yuv420p applied during transcode), so no
+ * filtering is needed and there is no risk of sideways/wrong-AR output.
+ *
+ * Returns the local path of the encoded file. The caller uploads it to the
+ * PRIVATE downloads bucket (unencrypted full video; it must never hit the
+ * public CDN). This step is best-effort (non-fatal) in the pipeline.
  */
 export const muxProcessedDownload = async (
   videoFiles: { rung: Rung; file: string }[],
@@ -26,12 +35,27 @@ export const muxProcessedDownload = async (
     cur.rung.width * cur.rung.height > best.rung.width * best.rung.height ? cur : best
   );
 
+  const codec = config.DOWNLOAD_VIDEO_CODEC;
+  const isHevc = codec === "libx265" || codec === "hevc";
+
   const outPath = path.join(workDir, "processed.mp4");
   const args = ["-y", "-i", top.file];
   if (audioFile) args.push("-i", audioFile);
   args.push("-map", "0:v:0");
   if (audioFile) args.push("-map", "1:a:0");
-  args.push("-c", "copy", "-movflags", "+faststart", outPath);
+
+  // Video: size-conscious CRF re-encode (NOT a copy of the streaming rung).
+  args.push("-c:v", codec, "-crf", config.DOWNLOAD_CRF, "-preset", config.DOWNLOAD_PRESET);
+  // `-tag:v hvc1` makes HEVC play on Apple (QuickTime/Safari/iOS); Apple rejects
+  // the default `hev1` tag. For H.264 use the broadly-compatible high profile.
+  if (isHevc) args.push("-tag:v", "hvc1");
+  else args.push("-profile:v", "high");
+  args.push("-pix_fmt", "yuv420p");
+
+  // Audio: copy the already-small shared 128k AAC as-is (no re-encode, no loss).
+  if (audioFile) args.push("-c:a", "copy");
+
+  args.push("-movflags", "+faststart", outPath);
 
   await run(config.FFMPEG_BIN, args, "download-mux");
   return outPath;
