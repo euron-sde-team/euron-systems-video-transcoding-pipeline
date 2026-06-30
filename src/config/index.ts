@@ -123,13 +123,17 @@ const config = {
   FFPROBE_BIN: process.env.FFPROBE_BIN ?? "ffprobe",
   // ─── Processed download MP4 (uploader's "save" file) ───────────────────────
   // The download is a SEPARATE, size-conscious re-encode of the top rung, NOT a
-  // copy of the ~5 Mbps streaming rung (which produced multi-GB downloads). HEVC
-  // CRF gives a much smaller file at near-identical quality. Swap the codec to
-  // libx264 (and CRF ~23) if the worker's ffmpeg lacks libx265. Preset trades
-  // encode time for size (HEVC SW encode is slow on Graviton, so default "fast").
-  DOWNLOAD_VIDEO_CODEC: process.env.DOWNLOAD_VIDEO_CODEC ?? "libx265",
-  DOWNLOAD_CRF: process.env.DOWNLOAD_CRF ?? "28",
-  DOWNLOAD_PRESET: process.env.DOWNLOAD_PRESET ?? "fast",
+  // copy of the ~5 Mbps streaming rung (which produced multi-GB downloads). Default
+  // is H.264 with a capped-CRF (CRF 23 quality, but never exceeding ~2.8 Mbps), which
+  // is ~1x realtime on the CPU-only Graviton workers (safe for long videos), plays
+  // on EVERY device, and deterministically ~halves the size. HEVC (libx265 + a higher
+  // CRF, e.g. 28-30) shrinks more but is 2-4x realtime on these workers (multi-hour
+  // encodes for ~1h videos + Spot-interruption risk) and needs HEVC-capable players,
+  // so it is opt-in via env. DOWNLOAD_MAXRATE_KBPS=0 disables the cap (pure CRF).
+  DOWNLOAD_VIDEO_CODEC: process.env.DOWNLOAD_VIDEO_CODEC ?? "libx264",
+  DOWNLOAD_CRF: process.env.DOWNLOAD_CRF ?? "23",
+  DOWNLOAD_PRESET: process.env.DOWNLOAD_PRESET ?? "medium",
+  DOWNLOAD_MAXRATE_KBPS: Number(process.env.DOWNLOAD_MAXRATE_KBPS ?? "2800"),
   // NOT IN USE (HLS-only migration): Shaka Packager (cbcs CMAF + DASH) is no longer
   // invoked; retained so a future DASH/DRM path can re-enable it.
   SHAKA_PACKAGER_BIN: process.env.SHAKA_PACKAGER_BIN ?? "packager",

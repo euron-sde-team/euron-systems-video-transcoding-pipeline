@@ -46,6 +46,17 @@ export const muxProcessedDownload = async (
 
   // Video: size-conscious CRF re-encode (NOT a copy of the streaming rung).
   args.push("-c:v", codec, "-crf", config.DOWNLOAD_CRF, "-preset", config.DOWNLOAD_PRESET);
+  // Optional rate cap → "capped CRF": keep CRF quality but never exceed the cap, so
+  // the size reduction is deterministic even on complex content (bufsize = 2x cap).
+  // Set DOWNLOAD_MAXRATE_KBPS=0 for pure CRF (e.g. when using HEVC).
+  if (config.DOWNLOAD_MAXRATE_KBPS > 0) {
+    args.push(
+      "-maxrate",
+      `${config.DOWNLOAD_MAXRATE_KBPS}k`,
+      "-bufsize",
+      `${config.DOWNLOAD_MAXRATE_KBPS * 2}k`
+    );
+  }
   // `-tag:v hvc1` makes HEVC play on Apple (QuickTime/Safari/iOS); Apple rejects
   // the default `hev1` tag. For H.264 use the broadly-compatible high profile.
   if (isHevc) args.push("-tag:v", "hvc1");
