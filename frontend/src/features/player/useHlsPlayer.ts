@@ -67,7 +67,49 @@ export function useHlsPlayer(
       return;
     }
 
-    const instance = new Hls({ enableWorker: true });
+    // hls.js runs on bare defaults otherwise; these options tune it for weak /
+    // low-bandwidth regions: start low and ramp, cap to the visible player size,
+    // buffer further ahead, bound memory, and stay patient on slow/flaky segment
+    // loads. enableWorker + the default enableSoftwareAES stay on (AES-128 tree).
+    const instance = new Hls({
+      enableWorker: true,
+      // Assume a low pipe until measured, so the first segment opens at the
+      // lowest (240p) rung and playback starts fast even on 2G/3G, then ramps
+      // up as testBandwidth (on by default) measures real throughput. Do NOT
+      // use startLevel: 0 here: the master lists 1080p as level 0.
+      abrEwmaDefaultEstimate: 300000,
+      // Never fetch a rung larger than the on-screen <video>. On a phone-sized
+      // player this alone avoids pulling the 720p/1080p ladder.
+      capLevelToPlayerSize: true,
+      // Hold a larger forward buffer so a brief network dip does not rebuffer
+      // (segments are immutable + edge-cached, so refilling is cheap).
+      maxBufferLength: 60,
+      // Evict played media older than 90s to cap memory on low-RAM devices
+      // (default is Infinity).
+      backBufferLength: 90,
+      // VOD tree: no low-latency-HLS behaviour needed.
+      lowLatencyMode: false,
+      // Segment loads: tolerate slow first-byte / slow links and retry more
+      // before failing. Full default shape preserved; only the timeouts and the
+      // error-retry count are raised.
+      fragLoadPolicy: {
+        default: {
+          maxTimeToFirstByteMs: 20000,
+          maxLoadTimeMs: 120000,
+          timeoutRetry: {
+            maxNumRetry: 3,
+            retryDelayMs: 0,
+            maxRetryDelayMs: 0,
+          },
+          errorRetry: {
+            maxNumRetry: 8,
+            retryDelayMs: 2000,
+            maxRetryDelayMs: 15000,
+            backoff: "linear",
+          },
+        },
+      },
+    });
 
     const onWaiting = () => setIsBuffering(true);
     const onPlaying = () => setIsBuffering(false);
