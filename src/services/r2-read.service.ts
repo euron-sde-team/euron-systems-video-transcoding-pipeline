@@ -1,3 +1,6 @@
+// PORTED: getObjectText now also lives in euron-systems-user-server/src/services/
+// vod-r2-read.service.ts (manifest reads for playback). Kept here for reference /
+// standalone operator use (deprecate-don't-delete).
 import {
   GetObjectCommand,
   HeadObjectCommand,

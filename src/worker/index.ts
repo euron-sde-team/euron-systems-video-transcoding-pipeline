@@ -86,7 +86,13 @@ async function run(): Promise<void> {
       logger.info(`[worker] claimed ${video.id} (attempt ${video.attempts}/${video.max_attempts})`);
       const outcome = await transcodePipeline(video, WORKER_ID, hb);
       hb.stop();
-      await markReady(video.id, WORKER_ID, outcome.captionsLangs, outcome.outputBytes);
+      await markReady(
+        video.id,
+        WORKER_ID,
+        outcome.captionsLangs,
+        outcome.outputBytes,
+        outcome.durationSec
+      );
       logger.info(`[worker] ready ${video.id}`);
     } catch (err) {
       hb.stop();

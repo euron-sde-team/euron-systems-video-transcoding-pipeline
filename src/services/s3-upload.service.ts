@@ -1,3 +1,6 @@
+// PORTED: the SaaS presign + HeadObject now live in euron-systems-tenant-admin-
+// backend/src/services/vod-s3.service.ts. Kept here for reference / standalone
+// operator use (deprecate-don't-delete).
 import { createReadStream, createWriteStream } from "fs";
 import { stat } from "fs/promises";
 import { pipeline } from "stream/promises";

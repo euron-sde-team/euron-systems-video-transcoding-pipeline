@@ -1,3 +1,6 @@
+// PORTED: now also lives in euron-systems-user-server/src/services/
+// playback-token.service.ts (the SaaS mints tokens after its enrollment check).
+// Kept here for reference / standalone operator use (deprecate-don't-delete).
 import jwt from "jsonwebtoken";
 import config from "../config";
 import { UnauthorizedError } from "../errors/unauthorized.error";

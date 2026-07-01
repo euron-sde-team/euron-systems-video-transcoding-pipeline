@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { ulid } from "ulid";
 import type { Selectable, Transaction } from "kysely";
 import { sql } from "kysely";
 import { db } from "../db/connection";
@@ -30,7 +30,7 @@ interface ListParams {
  */
 class VideosRepository {
   async create(input: CreateVideoInput, trx?: Trx): Promise<VideoRow> {
-    const id = randomUUID();
+    const id = ulid();
     const row = await (trx || db)
       .insertInto("videos")
       .values({

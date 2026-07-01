@@ -1,3 +1,6 @@
+// PORTED: requirePlaybackToken now also lives in euron-systems-user-server/src/
+// middlewares/vod-playback-token.middleware.ts. requireServiceAuth stays
+// pipeline-only. Kept for reference / standalone operator use (deprecate-don't-delete).
 import { timingSafeEqual } from "crypto";
 import type { NextFunction, Request, Response } from "express";
 import config from "../config";

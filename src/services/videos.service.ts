@@ -1,4 +1,7 @@
-import { randomUUID } from "crypto";
+// PORTED: the SaaS upload side now lives in euron-systems-tenant-admin-backend/
+// src/services/vod.service.ts (createUpload/complete/storage/duration). Kept here
+// for reference / standalone operator use (deprecate-don't-delete).
+import { ulid } from "ulid";
 import type { PresignedPost } from "@aws-sdk/s3-presigned-post";
 import config from "../config";
 import { video_status } from "../db/enums";
@@ -144,7 +147,7 @@ class VideosService {
     }
 
     // Generate the id up front so the S3 key embeds it (key = prefix/original.ext).
-    const videoId = randomUUID();
+    const videoId = ulid();
     const sourceKey = `${tenantId}/${videoId}/original.${ext}`;
     const outputPrefix = `${tenantId}/${videoId}`;
 

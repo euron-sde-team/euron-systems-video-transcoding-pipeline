@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { ulid } from "ulid";
 import type { Selectable, Transaction } from "kysely";
 import { db } from "../db/connection";
 import type { key_wrap_scheme } from "../db/enums";
@@ -21,7 +21,7 @@ class VideoKeysRepository {
     const row = await (trx || db)
       .insertInto("video_keys")
       .values({
-        id: randomUUID(),
+        id: ulid(),
         video_id: input.videoId,
         tenant_id: input.tenantId,
         kid_hex: input.kidHex,

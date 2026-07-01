@@ -22,6 +22,8 @@ export interface PipelineOutcome {
   captionsLangs: string[];
   /** Total bytes of the packaged output tree uploaded to the R2 output bucket. */
   outputBytes: number;
+  /** Probed source duration in seconds (persisted by markReady). */
+  durationSec: number;
 }
 
 interface PipelineConfig {
@@ -143,7 +145,11 @@ export const transcodePipeline = async (
     const outputPrefix = video.output_prefix ?? `${video.tenant_id}/${video.id}`;
     const { bytes: outputBytes } = await uploadOutputTree(outputDir, outputPrefix);
 
-    return { captionsLangs: captions ? [captions.lang] : [], outputBytes };
+    return {
+      captionsLangs: captions ? [captions.lang] : [],
+      outputBytes,
+      durationSec: probed.durationSec,
+    };
   } finally {
     await rm(jobDir, { recursive: true, force: true }).catch(() => {
       /* best-effort cleanup */

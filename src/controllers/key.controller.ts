@@ -1,3 +1,6 @@
+// PORTED: now also lives in euron-systems-user-server/src/controllers/
+// vod-key.controller.ts (AES key delivery served under the SaaS /vod routes).
+// Kept here for reference / standalone operator use (deprecate-don't-delete).
 import type { Request, Response } from "express";
 import { ForbiddenError } from "../errors/forbidden.error";
 import { NotFoundError } from "../errors/not-found.error";

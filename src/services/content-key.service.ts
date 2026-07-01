@@ -1,3 +1,6 @@
+// PORTED: the delivery half (unwrap) now also lives in euron-systems-user-server/
+// src/services/content-key.service.ts. The worker still generates + wraps keys
+// here. Kept for reference / standalone operator use (deprecate-don't-delete).
 import { DecryptCommand, EncryptCommand, KMSClient } from "@aws-sdk/client-kms";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
 import config from "../config";
