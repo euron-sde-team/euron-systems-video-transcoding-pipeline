@@ -2,8 +2,6 @@ import { mkdir, rm } from "fs/promises";
 import path from "path";
 import config from "../config";
 import { setOrientation, type VideoRow } from "../db/queue";
-import { generateCaptions } from "../encoding/captions";
-import { muxProcessedDownload } from "../encoding/download-mux";
 import { transcode } from "../encoding/ffmpeg";
 import { packageHlsAes } from "../encoding/hls-aes";
 import { selectLadder } from "../encoding/ladder";
@@ -13,17 +11,21 @@ import { probe } from "../encoding/probe";
 import { generateThumbnails } from "../encoding/thumbnails";
 import contentKeyService from "../services/content-key.service";
 import s3UploadService from "../services/s3-upload.service";
-import { HLS_AES_KEY_URI_PLACEHOLDER, processedDownloadKey } from "../utils/const";
+import { HLS_AES_KEY_URI_PLACEHOLDER } from "../utils/const";
 import logger from "../utils/logger";
 import type { Heartbeat } from "./heartbeat";
-import { uploadOutputTree, uploadProcessedDownload } from "./r2";
+import { uploadOutputTree } from "./r2";
 
-export interface PipelineOutcome {
-  captionsLangs: string[];
+export interface PrimaryOutcome {
   /** Total bytes of the packaged output tree uploaded to the R2 output bucket. */
   outputBytes: number;
-  /** Probed source duration in seconds (persisted by markReady). */
+  /** Probed source duration in seconds (persisted by markReadyAndEnqueue). */
   durationSec: number;
+  /**
+   * Whether a CAPTIONS background job should be enqueued (the source had audio and
+   * captions were not disabled). When false the caller marks captions 'skipped'.
+   */
+  enqueueCaptions: boolean;
 }
 
 interface PipelineConfig {
@@ -33,17 +35,18 @@ interface PipelineConfig {
 }
 
 /**
- * Full transcode pipeline for one claimed video. Stages match the `video_stage`
- * enum; each boundary writes stage + progress via the heartbeat so the dashboard
- * shows live status. Everything happens in a per-job temp dir that is always
- * removed in `finally`, disk is the scarce resource on a worker running many
- * jobs back-to-back.
+ * PRIMARY transcode for one claimed video: the playback-critical path ONLY.
+ * Decode + ABR ladder + thumbnails + AES-128 HLS packaging + R2 upload, then the
+ * caller flips the video to READY. Captions and the downloadable MP4 are NO LONGER
+ * produced here, they are decoupled into video_jobs that run after READY (so the
+ * video is watchable the moment this returns, not hours later). Everything happens
+ * in a per-job temp dir that is always removed in `finally`.
  */
-export const transcodePipeline = async (
+export const runPrimary = async (
   video: VideoRow,
   workerId: string,
   hb: Heartbeat
-): Promise<PipelineOutcome> => {
+): Promise<PrimaryOutcome> => {
   const jobDir = path.join(config.WORK_DIR, video.id);
   const sourceDir = path.join(jobDir, "src");
   const renditionsDir = path.join(jobDir, "renditions");
@@ -61,13 +64,14 @@ export const transcodePipeline = async (
     // ── download source (same-region S3 → free egress) ──
     await s3UploadService.downloadToFile(video.source_key, inputPath);
 
-    // ── 1. probe + orientation → ladder ──
+    // ── 1. probe + orientation → ladder (capped to source bitrate) ──
     const probed = await probe(inputPath);
     await setOrientation(video.id, workerId, probed.orientation);
-    const ladder = selectLadder(probed.orientation, probed.width, probed.height);
+    const ladder = selectLadder(probed.orientation, probed.width, probed.height, probed.bitrateKbps);
     logger.info(
       `[pipeline ${video.id}] ${probed.width}x${probed.height} ${probed.orientation} ` +
-        `rot=${probed.rotation}, ${ladder.length} rungs, ${probed.durationSec}s, audio=${probed.hasAudio}`
+        `rot=${probed.rotation}, ${ladder.length} rungs, ${probed.durationSec}s, ` +
+        `audio=${probed.hasAudio}, src=${probed.bitrateKbps}kbps`
     );
 
     // ── 2. transcoding (single decode, many encodes) + thumbnails ──
@@ -80,38 +84,17 @@ export const transcodePipeline = async (
       probed.rotation,
       probed.durationSec
     );
-    await hb.update("transcoding", 55);
+    await hb.update("transcoding", 60);
 
     // Thumbnails/poster write straight into outputDir (shipped as-is to R2).
     await generateThumbnails(inputPath, outputDir, probed.width, probed.height, probed.durationSec);
-    await hb.update("transcoding", 62);
+    await hb.update("transcoding", 68);
 
-    // ── 3. transcribing (captions) ──
-    const cfg = (video.pipeline_config ?? {}) as PipelineConfig;
-    let captions: { vttFile: string; lang: string } | null = null;
-    if (cfg.captions !== false) {
-      await hb.update("transcribing", 66);
-      const captionsLang = cfg.captionsLang ?? config.CAPTIONS_DEFAULT_LANG;
-      captions = await generateCaptions(inputPath, renditionsDir, probed.hasAudio, captionsLang);
-    }
-
-    // ── 4. packaging (generate + store key, then AES-128 HLS-TS) ──
-    // NOTE (HLS-only migration): the AES-128 MPEG-TS HLS tree (step 4b) is now the
-    // ONLY delivery tree. The cbcs CMAF + DASH packaging (packageCmaf) is retained
-    // in src/encoding/shaka.ts but NOT IN USE. The AES tree's #EXT-X-KEY URI is
-    // injected per request by hls.controller.ts, so no hlsKeyUri is baked here.
-    await hb.update("packaging", 75);
+    // ── 3. packaging (generate + store key, then AES-128 HLS-TS, NO captions) ──
+    // Captions are decoupled: the master here has NO subtitle rendition. The
+    // CAPTIONS job re-uploads master.m3u8 (with subs) once whisper finishes.
+    await hb.update("packaging", 78);
     const key = await contentKeyService.generateAndStore(video.tenant_id, video.id);
-    // NOT IN USE (HLS-only migration): cbcs CMAF + DASH packaging.
-    // const hlsKeyUri = config.PUBLIC_API_BASE
-    //   ? `${config.PUBLIC_API_BASE.replace(/\/+$/, "")}/api/v1/videos/${video.id}/key?format=raw`
-    //   : undefined;
-    // await packageCmaf({ outputDir, videoFiles, audioFile, captions, key, hlsKeyUri });
-    await hb.update("packaging", 82);
-
-    // ── 4b. AES-128 HLS-TS tree (Safari native path), same content key ──
-    // Shaka can't emit METHOD=AES-128 and cbcs needs FairPlay on Apple, so this
-    // parallel TS tree (remuxed, no re-encode) is what Safari/iOS play natively.
     await packageHlsAes({
       outputDir,
       videoFiles,
@@ -119,36 +102,21 @@ export const transcodePipeline = async (
       key: { keyBytes: key.keyBytes },
       keyUriPlaceholder: HLS_AES_KEY_URI_PLACEHOLDER,
       workDir: renditionsDir,
-      captions,
+      captions: null,
       durationSec: probed.durationSec,
     });
-    await hb.update("packaging", 85);
+    await hb.update("packaging", 88);
 
-    // ── 4c. processed downloadable MP4 → PRIVATE R2 downloads bucket (non-fatal) ──
-    // The unencrypted master is uploaded to a private R2 bucket (free egress),
-    // served only via a short-lived presigned GET. It must NOT hit the public CDN.
-    // NOT IN USE (processed download moved to R2): the previous private-S3 upload
-    // (s3UploadService.uploadFile) is retired; only the R2 path runs now.
-    try {
-      const processed = await muxProcessedDownload(videoFiles, audioFile, renditionsDir);
-      if (processed) {
-        await uploadProcessedDownload(processedDownloadKey(video.tenant_id, video.id), processed);
-      }
-    } catch (err) {
-      logger.error(
-        `[pipeline ${video.id}] processed download failed (non-fatal): ${(err as Error).message}`
-      );
-    }
-
-    // ── 5. uploading_output → R2 ──
-    await hb.update("uploading_output", 90);
+    // ── 4. uploading_output → R2 (video is playable once this completes) ──
+    await hb.update("uploading_output", 92);
     const outputPrefix = video.output_prefix ?? `${video.tenant_id}/${video.id}`;
     const { bytes: outputBytes } = await uploadOutputTree(outputDir, outputPrefix);
 
+    const cfg = (video.pipeline_config ?? {}) as PipelineConfig;
     return {
-      captionsLangs: captions ? [captions.lang] : [],
       outputBytes,
       durationSec: probed.durationSec,
+      enqueueCaptions: probed.hasAudio && cfg.captions !== false,
     };
   } finally {
     await rm(jobDir, { recursive: true, force: true }).catch(() => {

@@ -79,6 +79,10 @@ write_param "R2_PUBLIC_BASE"        "R2_PUBLIC_BASE"
 write_param "KEY_KMS_KEY_ID"        "KEY_KMS_KEY_ID"
 write_param "PLAYBACK_TOKEN_SECRET" "PLAYBACK_TOKEN_SECRET"
 write_param "PUBLIC_API_BASE"       "PUBLIC_API_BASE"
+# Streaming ladder speed levers (optional; empty/absent SSM param → code default).
+write_param "LADDER_PRESET"         "LADDER_PRESET"
+write_param "CAP_TO_SOURCE"         "CAP_TO_SOURCE"
+write_param "CAP_TO_SOURCE_FACTOR"  "CAP_TO_SOURCE_FACTOR"
 
 chmod 600 "$ENV_FILE"
 

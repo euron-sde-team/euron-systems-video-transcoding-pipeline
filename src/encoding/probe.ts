@@ -17,6 +17,12 @@ export interface ProbeResult {
    * worker rotates explicitly using this value (see encoding/ffmpeg.ts).
    */
   rotation: number;
+  /**
+   * Source bitrate in kbps (video stream bitrate, else the container total which
+   * includes audio, a safe over-estimate). 0 when ffprobe cannot report one. Used
+   * by selectLadder to cap rung bitrates to the source (CAP_TO_SOURCE).
+   */
+  bitrateKbps: number;
 }
 
 interface FfprobeSideData {
@@ -27,12 +33,13 @@ interface FfprobeStream {
   codec_type?: string;
   width?: number;
   height?: number;
+  bit_rate?: string;
   tags?: { rotate?: string };
   side_data_list?: FfprobeSideData[];
 }
 interface FfprobeOutput {
   streams?: FfprobeStream[];
-  format?: { duration?: string };
+  format?: { duration?: string; bit_rate?: string };
 }
 
 const classify = (w: number, h: number): Orientation => {
@@ -104,5 +111,20 @@ export const probe = async (inputPath: string): Promise<ProbeResult> => {
   const durationSec = Math.max(0, Math.round(Number(parsed.format?.duration ?? 0)));
   const hasAudio = (parsed.streams ?? []).some((s) => s.codec_type === "audio");
 
-  return { width, height, durationSec, orientation: classify(width, height), hasAudio, rotation };
+  // Prefer the video stream's own bitrate; fall back to the container total (which
+  // includes audio, a safe over-estimate for capping). 0 when neither is reported.
+  const videoBps = Number(video.bit_rate ?? 0);
+  const formatBps = Number(parsed.format?.bit_rate ?? 0);
+  const bitrateBps = videoBps > 0 ? videoBps : formatBps;
+  const bitrateKbps = bitrateBps > 0 ? Math.round(bitrateBps / 1000) : 0;
+
+  return {
+    width,
+    height,
+    durationSec,
+    orientation: classify(width, height),
+    hasAudio,
+    rotation,
+    bitrateKbps,
+  };
 };

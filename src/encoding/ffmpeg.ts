@@ -73,7 +73,7 @@ export const transcode = async (
       "-b:v", `${rung.videoKbps}k`,
       "-maxrate", `${rung.maxrateKbps}k`,
       "-bufsize", `${rung.bufsizeKbps}k`,
-      "-preset", "medium",
+      "-preset", config.LADDER_PRESET,
       "-profile:v", "high",
       "-pix_fmt", "yuv420p",
       "-threads", "0",

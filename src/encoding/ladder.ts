@@ -1,3 +1,4 @@
+import config from "../config";
 import type { Orientation } from "./probe";
 
 export interface Rung {
@@ -37,12 +38,36 @@ const VERTICAL: Rung[] = [
 export const selectLadder = (
   orientation: Orientation,
   srcWidth: number,
-  srcHeight: number
+  srcHeight: number,
+  sourceBitrateKbps = 0
 ): Rung[] => {
   const table = orientation === "portrait" ? VERTICAL : LANDSCAPE;
   const sourceLimit = orientation === "portrait" ? srcWidth : srcHeight;
   const limitOf = (r: Rung) => (orientation === "portrait" ? r.width : r.height);
 
   const fit = table.filter((r) => limitOf(r) <= sourceLimit);
-  return fit.length > 0 ? fit : [table[table.length - 1] as Rung];
+  const rungs = fit.length > 0 ? fit : [table[table.length - 1] as Rung];
+  return capToSource(rungs, sourceBitrateKbps);
+};
+
+/**
+ * Cap each rung's bitrate to the source bitrate (× CAP_TO_SOURCE_FACTOR) so a
+ * low-bitrate source is not encoded at the fixed ladder targets. Never RAISES a
+ * rung, so a rung already below the cap is byte-for-byte unchanged; only rungs
+ * above the cap are lowered (maxrate/bufsize kept proportional). Deterministic in
+ * (rungs, sourceBitrateKbps), so the PRIMARY transcode and the decoupled CAPTIONS
+ * master rebuild compute an identical ladder. No-op when disabled or bitrate=0.
+ */
+const capToSource = (rungs: Rung[], sourceBitrateKbps: number): Rung[] => {
+  if (!config.CAP_TO_SOURCE || sourceBitrateKbps <= 0) return rungs;
+  const cap = Math.round(sourceBitrateKbps * config.CAP_TO_SOURCE_FACTOR);
+  return rungs.map((r) => {
+    if (r.videoKbps <= cap) return r;
+    return {
+      ...r,
+      videoKbps: cap,
+      maxrateKbps: Math.round(cap * 1.07),
+      bufsizeKbps: Math.round(cap * 1.5),
+    };
+  });
 };

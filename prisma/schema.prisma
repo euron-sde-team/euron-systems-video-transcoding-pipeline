@@ -11,34 +11,37 @@ datasource db {
 }
 
 model videos {
-  id               String          @id
+  id               String                @id
   tenant_id        String
-  status           video_status    @default(uploading)
+  status           video_status          @default(uploading)
   stage            video_stage?
-  progress         Int             @default(0) @db.SmallInt
+  progress         Int                   @default(0) @db.SmallInt
   source_key       String?
   source_bytes     BigInt?
   output_prefix    String?
   output_bytes     BigInt?
   orientation      orientation?
   duration_seconds Int?
-  protection       protection_mode @default(aes_128)
-  watermark        watermark_mode  @default(dynamic_overlay)
-  allow_offline    Boolean         @default(false)
-  captions_langs   String[]        @default([])
+  protection       protection_mode       @default(aes_128)
+  watermark        watermark_mode        @default(dynamic_overlay)
+  allow_offline    Boolean               @default(false)
+  captions_langs   String[]              @default([])
   locked_by        String?
-  locked_at        DateTime?       @db.Timestamptz(6)
-  heartbeat_at     DateTime?       @db.Timestamptz(6)
-  attempts         Int             @default(0)
-  max_attempts     Int             @default(3)
-  pipeline_config  Json            @default("{}")
+  locked_at        DateTime?             @db.Timestamptz(6)
+  heartbeat_at     DateTime?             @db.Timestamptz(6)
+  attempts         Int                   @default(0)
+  max_attempts     Int                   @default(3)
+  pipeline_config  Json                  @default("{}")
   error            String?
-  created_at       DateTime        @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime        @default(now()) @db.Timestamptz(6)
-  ready_at         DateTime?       @db.Timestamptz(6)
+  created_at       DateTime              @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime              @default(now()) @db.Timestamptz(6)
+  ready_at         DateTime?             @db.Timestamptz(6)
+  captions_status  video_artifact_status @default(pending)
+  mp4_status       video_artifact_status @default(pending)
   video_keys       video_keys?
 
   @@index([tenant_id, created_at])
+  @@index([status, ready_at])
 }
 
 model video_keys {
@@ -52,6 +55,25 @@ model video_keys {
   videos      videos          @relation(fields: [video_id], references: [id], onDelete: Cascade)
 
   @@index([tenant_id])
+}
+
+model video_jobs {
+  id           String           @id
+  video_id     String
+  tenant_id    String
+  kind         video_job_kind
+  status       video_job_status @default(queued)
+  attempts     Int              @default(0)
+  max_attempts Int              @default(3)
+  locked_by    String?
+  locked_at    DateTime?        @db.Timestamptz(6)
+  heartbeat_at DateTime?        @db.Timestamptz(6)
+  error        String?
+  created_at   DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime         @default(now()) @db.Timestamptz(6)
+
+  @@index([status, kind])
+  @@index([video_id])
 }
 
 model addon_subscriptions {
@@ -1462,20 +1484,22 @@ model certificate_batches {
 }
 
 model certificates {
-  id                 String             @id
-  tenant_id          String
-  tenant_member_id   String
-  course_id          String
-  certificate_number String
-  status             certificate_status @default(ISSUED)
-  issued_at          DateTime           @default(now())
-  revoked_at         DateTime?
-  created_at         DateTime
-  updated_at         DateTime
-  emailed_at         DateTime?
-  courses            courses            @relation(fields: [course_id], references: [id], onDelete: Cascade)
-  tenants            tenants            @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
-  tenant_members     tenant_members     @relation(fields: [tenant_member_id], references: [id], onDelete: Cascade)
+  id                      String             @id
+  tenant_id               String
+  tenant_member_id        String
+  course_id               String
+  certificate_number      String
+  status                  certificate_status @default(ISSUED)
+  issued_at               DateTime           @default(now())
+  revoked_at              DateTime?
+  created_at              DateTime
+  updated_at              DateTime
+  emailed_at              DateTime?
+  certificate_template_id String?
+  template_snapshot       Json?
+  courses                 courses            @relation(fields: [course_id], references: [id], onDelete: Cascade)
+  tenants                 tenants            @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+  tenant_members          tenant_members     @relation(fields: [tenant_member_id], references: [id], onDelete: Cascade)
 
   @@unique([tenant_id, certificate_number])
   @@unique([tenant_id, tenant_member_id, course_id])
@@ -2671,6 +2695,7 @@ model courses {
   thumbnail_key              String?
   course_type                course_type                  @default(NORMAL)
   validity_days              Int                          @default(365)
+  certificate_template_id    String?
   assignment_submissions     assignment_submissions[]
   assignments                assignments[]
   batch_items                batch_items[]
@@ -6930,6 +6955,7 @@ model quiz_questions {
   created_at           DateTime
   updated_at           DateTime
   question_type        quiz_question_type     @default(MCQ)
+  source_question_id   String?
   quiz_attempt_answers quiz_attempt_answers[]
   quiz_options         quiz_options[]
   quizzes              quizzes                @relation(fields: [quiz_id], references: [id], onDelete: Cascade)
@@ -6963,6 +6989,8 @@ model quizzes {
   proctor_camera           Boolean                @default(false)
   proctor_max_tab_switches Int?
   proctoring_enabled       Boolean                @default(false)
+  bank_selection           Json?
+  question_bank_id         String?
   member_quiz_progress     member_quiz_progress[]
   quiz_attempts            quiz_attempts[]
   quiz_questions           quiz_questions[]
@@ -8633,6 +8661,7 @@ model tenants {
   access_managed_enabled_by_user_id      String?
   certificate_tab_enabled                Boolean                           @default(true)
   jobs_org_only_enabled                  Boolean                           @default(false)
+  video_provider                         tenant_video_provider?
   affiliate_clicks                       affiliate_clicks[]
   affiliate_commissions                  affiliate_commissions[]
   affiliate_settings                     affiliate_settings?
@@ -8962,6 +8991,7 @@ model test_certificates {
   revoked_at         DateTime?
   created_at         DateTime
   updated_at         DateTime
+  template_snapshot  Json?
 
   @@unique([tenant_id, certificate_number])
   @@index([tenant_id, status])
@@ -10332,6 +10362,98 @@ model withdrawal_request_messages {
   @@index([tenant_id, created_at])
 }
 
+model certificate_templates {
+  id                   String   @id
+  tenant_id            String
+  name                 String
+  page_size            String   @default("A4")
+  orientation          String   @default("LANDSCAPE")
+  background_asset_url String?
+  layout               Json
+  is_default           Boolean  @default(false)
+  status               String   @default("DRAFT")
+  created_at           DateTime @default(now())
+  updated_at           DateTime @default(now())
+
+  @@index([tenant_id])
+  @@index([tenant_id, is_default])
+}
+
+model demo_bookings {
+  id                      String              @id
+  host_admin_user_id      String
+  lead_name               String
+  lead_email              String
+  lead_phone              String?
+  notes                   String?
+  scheduled_at            DateTime            @db.Timestamptz(6)
+  duration_minutes        Int                 @default(15)
+  timezone                String              @default("Asia/Kolkata")
+  status                  demo_booking_status @default(CONFIRMED)
+  google_event_id         String?
+  meeting_link            String?
+  created_at              DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime            @default(now()) @db.Timestamptz(6)
+  artifacts_fetched_at    DateTime?           @db.Timestamptz(6)
+  artifacts_status        String              @default("PENDING")
+  meet_space_id           String?
+  notes_markdown          String?
+  recording_drive_file_id String?
+  recording_drive_link    String?
+  recording_s3_key        String?
+  transcript_text         String?
+
+  @@index([artifacts_status])
+  @@index([host_admin_user_id, scheduled_at])
+  @@index([scheduled_at])
+  @@index([status])
+}
+
+model demo_host_availability {
+  id            String                @id
+  admin_user_id String
+  day_of_week   demo_availability_day
+  start_time    String
+  end_time      String
+  timezone      String                @default("Asia/Kolkata")
+  is_active     Boolean               @default(true)
+  created_at    DateTime              @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime              @default(now()) @db.Timestamptz(6)
+
+  @@index([admin_user_id, day_of_week])
+  @@index([admin_user_id, is_active])
+}
+
+model demo_host_blocked_slots {
+  id            String   @id
+  admin_user_id String
+  blocked_date  String
+  start_time    String?
+  end_time      String?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([admin_user_id, blocked_date])
+}
+
+model demo_host_calendar_connections {
+  id                String    @id
+  admin_user_id     String    @unique
+  google_email      String
+  access_token      String
+  refresh_token     String
+  token_expires_at  DateTime  @db.Timestamptz(6)
+  calendar_id       String    @default("primary")
+  sync_enabled      Boolean   @default(true)
+  needs_reauth      Boolean   @default(false)
+  last_synced_at    DateTime? @db.Timestamptz(6)
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime  @default(now()) @db.Timestamptz(6)
+  slot_minutes      Int       @default(15)
+  recording_enabled Boolean   @default(false)
+
+  @@index([admin_user_id])
+}
+
 enum video_status {
   uploading
   uploaded
@@ -10369,6 +10491,32 @@ enum orientation {
 enum key_wrap_scheme {
   kms
   local_aes
+}
+
+enum video_artifact_status {
+  pending
+  processing
+  ready
+  failed
+  skipped
+}
+
+enum video_job_kind {
+  CAPTIONS
+  DOWNLOAD
+}
+
+enum video_job_status {
+  queued
+  processing
+  done
+  failed
+  cancelled
+}
+
+enum tenant_video_provider {
+  VDOCIPHER
+  EURON_VOD
 }
 
 enum addon_subscription_status {
@@ -12185,4 +12333,21 @@ enum webhook_status {
 enum webinar_type {
   SINGLE
   SERIES
+}
+
+enum demo_availability_day {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum demo_booking_status {
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
 }

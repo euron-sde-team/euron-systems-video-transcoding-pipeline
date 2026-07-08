@@ -134,6 +134,21 @@ const config = {
   DOWNLOAD_CRF: process.env.DOWNLOAD_CRF ?? "23",
   DOWNLOAD_PRESET: process.env.DOWNLOAD_PRESET ?? "medium",
   DOWNLOAD_MAXRATE_KBPS: Number(process.env.DOWNLOAD_MAXRATE_KBPS ?? "2800"),
+  // ─── Streaming ladder speed levers (SSM-tunable, no AMI re-bake) ────────────
+  // x264 preset for the ABR ladder encode (encoding/ffmpeg.ts). "medium" is the
+  // original quality/speed point; "fast"/"veryfast" cut ladder wall-clock ~1.5-4x
+  // at the same capped bitrate for a small, tunable quality trade. Applies ONLY to
+  // the streaming ladder, NOT the download re-encode (that is DOWNLOAD_PRESET).
+  // `||` (not `??`): the bootstrap write_param writes an EMPTY string when the SSM
+  // param is absent, so empty must fall back to the default, not stick as "".
+  LADDER_PRESET: process.env.LADDER_PRESET || "medium",
+  // Cap each rung's target/maxrate to the SOURCE bitrate × factor. The median
+  // lecture source is ~2 Mbps, so the fixed 5 Mbps 1080p ladder over-encodes;
+  // capping to source (+ headroom) is near-zero quality loss (never exceeds the
+  // source) while cutting CPU + storage + egress. Falls back to the fixed rungs
+  // when ffprobe cannot report a source bitrate.
+  CAP_TO_SOURCE: (process.env.CAP_TO_SOURCE || "true") === "true",
+  CAP_TO_SOURCE_FACTOR: Number(process.env.CAP_TO_SOURCE_FACTOR) || 1.1,
   // NOT IN USE (HLS-only migration): Shaka Packager (cbcs CMAF + DASH) is no longer
   // invoked; retained so a future DASH/DRM path can re-enable it.
   SHAKA_PACKAGER_BIN: process.env.SHAKA_PACKAGER_BIN ?? "packager",

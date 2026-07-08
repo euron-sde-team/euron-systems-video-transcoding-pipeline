@@ -56,6 +56,79 @@ const withTimestampMap = (vtt: string): string => {
 };
 
 /**
+ * Write the subtitle rendition (subs/<lang>.vtt + subs/<lang>.m3u8) under an
+ * hls-aes root. Extracted so BOTH the PRIMARY packaging AND the decoupled CAPTIONS
+ * job (which re-uploads just these + master.m3u8 to R2 after whisper finishes) use
+ * the identical layout the player already expects.
+ */
+export const writeSubtitleRendition = async (
+  hlsRoot: string,
+  vttFile: string,
+  lang: string,
+  durationSec: number
+): Promise<void> => {
+  const subsDir = path.join(hlsRoot, "subs");
+  await mkdir(subsDir, { recursive: true });
+
+  // Prepend X-TIMESTAMP-MAP so cues map to the (PTS-0) TS media timeline.
+  const rawVtt = await readFile(vttFile, "utf8");
+  await writeFile(path.join(subsDir, `${lang}.vtt`), withTimestampMap(rawVtt));
+
+  // Single full-duration WebVTT "segment" VOD subtitle playlist.
+  const dur = Math.max(1, durationSec);
+  const subPlaylist = [
+    "#EXTM3U",
+    "#EXT-X-VERSION:3",
+    `#EXT-X-TARGETDURATION:${dur}`,
+    "#EXT-X-MEDIA-SEQUENCE:0",
+    "#EXT-X-PLAYLIST-TYPE:VOD",
+    `#EXTINF:${dur}.000,`,
+    `${lang}.vtt`,
+    "#EXT-X-ENDLIST",
+    "",
+  ].join("\n");
+  await writeFile(path.join(subsDir, `${lang}.m3u8`), subPlaylist);
+};
+
+/**
+ * Synthesize the AES-128 HLS master playlist for a rung set, optionally exposing
+ * a subtitle rendition (captionLang != null). Deterministic in (rungs, hasAudio,
+ * captionLang), so the CAPTIONS job rebuilds a master byte-identical to the
+ * PRIMARY's plus the subtitle lines, given the same (deterministic) ladder.
+ */
+export const buildMasterPlaylist = (
+  videoFiles: { rung: Rung }[],
+  hasAudio: boolean,
+  captionLang: string | null
+): string => {
+  const audioBps = hasAudio ? 128_000 : 0;
+  const codecs = hasAudio ? `${VIDEO_CODEC},${AUDIO_CODEC}` : VIDEO_CODEC;
+
+  let subtitleMedia = "";
+  let subtitlesAttr = "";
+  if (captionLang) {
+    const name = LANG_NAMES[captionLang] ?? captionLang.toUpperCase();
+    subtitleMedia =
+      `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="${SUBS_GROUP}",NAME="${name}",` +
+      `LANGUAGE="${captionLang}",DEFAULT=YES,AUTOSELECT=YES,URI="subs/${captionLang}.m3u8"`;
+    subtitlesAttr = `,SUBTITLES="${SUBS_GROUP}"`;
+  }
+
+  const lines = ["#EXTM3U", "#EXT-X-VERSION:3"];
+  if (subtitleMedia) lines.push(subtitleMedia);
+  for (const { rung } of videoFiles) {
+    const bandwidth = rung.maxrateKbps * 1000 + audioBps;
+    lines.push(
+      `#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},` +
+        `RESOLUTION=${rung.width}x${rung.height},CODECS="${codecs}"${subtitlesAttr}`
+    );
+    lines.push(`${rung.name}/index.m3u8`);
+  }
+  lines.push("");
+  return lines.join("\n");
+};
+
+/**
  * Build the AES-128 (METHOD=AES-128) HLS-over-MPEG-TS tree that Safari/iOS play
  * NATIVELY (no CDM, key fetched over HTTPS). This exists ALONGSIDE the cbcs/CMAF
  * tree from packageCmaf(): Shaka Packager cannot emit METHOD=AES-128, and cbcs
@@ -125,55 +198,13 @@ export const packageHlsAes = async (input: HlsAesInput): Promise<HlsAesResult> =
   }
 
   // ── optional subtitle rendition (D4: captions on native Safari) ─────────────
-  let subtitleMedia = "";
-  let subtitlesAttr = "";
   if (input.captions) {
-    const { lang } = input.captions;
-    const subsDir = path.join(root, "subs");
-    await mkdir(subsDir, { recursive: true });
-
-    // Prepend X-TIMESTAMP-MAP so cues map to the (PTS-0) TS media timeline.
-    const rawVtt = await readFile(input.captions.vttFile, "utf8");
-    const mappedVtt = withTimestampMap(rawVtt);
-    await writeFile(path.join(subsDir, `${lang}.vtt`), mappedVtt);
-
-    // Single full-duration WebVTT "segment" VOD subtitle playlist.
-    const dur = Math.max(1, input.durationSec);
-    const subPlaylist = [
-      "#EXTM3U",
-      "#EXT-X-VERSION:3",
-      `#EXT-X-TARGETDURATION:${dur}`,
-      "#EXT-X-MEDIA-SEQUENCE:0",
-      "#EXT-X-PLAYLIST-TYPE:VOD",
-      `#EXTINF:${dur}.000,`,
-      `${lang}.vtt`,
-      "#EXT-X-ENDLIST",
-      "",
-    ].join("\n");
-    await writeFile(path.join(subsDir, `${lang}.m3u8`), subPlaylist);
-
-    const name = LANG_NAMES[lang] ?? lang.toUpperCase();
-    subtitleMedia =
-      `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="${SUBS_GROUP}",NAME="${name}",` +
-      `LANGUAGE="${lang}",DEFAULT=YES,AUTOSELECT=YES,URI="subs/${lang}.m3u8"\n`;
-    subtitlesAttr = `,SUBTITLES="${SUBS_GROUP}"`;
+    await writeSubtitleRendition(root, input.captions.vttFile, input.captions.lang, input.durationSec);
   }
 
   // ── synthesize the master playlist (ffmpeg's per-rung runs don't write one) ──
-  const audioBps = input.audioFile ? 128_000 : 0;
-  const codecs = input.audioFile ? `${VIDEO_CODEC},${AUDIO_CODEC}` : VIDEO_CODEC;
-  const lines = ["#EXTM3U", "#EXT-X-VERSION:3"];
-  if (subtitleMedia) lines.push(subtitleMedia.trimEnd());
-  for (const { rung } of input.videoFiles) {
-    const bandwidth = rung.maxrateKbps * 1000 + audioBps;
-    lines.push(
-      `#EXT-X-STREAM-INF:BANDWIDTH=${bandwidth},` +
-        `RESOLUTION=${rung.width}x${rung.height},CODECS="${codecs}"${subtitlesAttr}`
-    );
-    lines.push(`${rung.name}/index.m3u8`);
-  }
-  lines.push("");
-  await writeFile(path.join(root, "master.m3u8"), lines.join("\n"));
+  const master = buildMasterPlaylist(input.videoFiles, !!input.audioFile, input.captions?.lang ?? null);
+  await writeFile(path.join(root, "master.m3u8"), master);
 
   return { master: "hls-aes/master.m3u8" };
 };

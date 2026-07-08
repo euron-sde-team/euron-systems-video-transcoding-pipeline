@@ -37,6 +37,32 @@ export const key_wrap_scheme = {
     local_aes: "local_aes"
 } as const;
 export type key_wrap_scheme = (typeof key_wrap_scheme)[keyof typeof key_wrap_scheme];
+export const video_artifact_status = {
+    pending: "pending",
+    processing: "processing",
+    ready: "ready",
+    failed: "failed",
+    skipped: "skipped"
+} as const;
+export type video_artifact_status = (typeof video_artifact_status)[keyof typeof video_artifact_status];
+export const video_job_kind = {
+    CAPTIONS: "CAPTIONS",
+    DOWNLOAD: "DOWNLOAD"
+} as const;
+export type video_job_kind = (typeof video_job_kind)[keyof typeof video_job_kind];
+export const video_job_status = {
+    queued: "queued",
+    processing: "processing",
+    done: "done",
+    failed: "failed",
+    cancelled: "cancelled"
+} as const;
+export type video_job_status = (typeof video_job_status)[keyof typeof video_job_status];
+export const tenant_video_provider = {
+    VDOCIPHER: "VDOCIPHER",
+    EURON_VOD: "EURON_VOD"
+} as const;
+export type tenant_video_provider = (typeof tenant_video_provider)[keyof typeof tenant_video_provider];
 export const addon_subscription_status = {
     PENDING: "PENDING",
     ACTIVE: "ACTIVE",
