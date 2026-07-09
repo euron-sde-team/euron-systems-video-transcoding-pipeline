@@ -47,7 +47,7 @@ export const runCaptionsJob = async (job: VideoJobRow, signal: AbortSignal): Pro
   try {
     const ext = video.source_key.split(".").pop() || "mp4";
     const inputPath = path.join(sourceDir, `original.${ext}`);
-    await s3UploadService.downloadToFile(video.source_key, inputPath);
+    await s3UploadService.downloadToFile(video.source_key, inputPath, signal);
 
     const probed = await probe(inputPath, signal);
     if (!probed.hasAudio) {
@@ -86,7 +86,8 @@ export const runCaptionsJob = async (job: VideoJobRow, signal: AbortSignal): Pro
     // Upload ONLY the hls-aes subtree (master.m3u8 + subs/*). Uploading jobDir would
     // also push the re-downloaded source + WAV under src/ to the public output bucket.
     const outputPrefix = video.output_prefix ?? `${video.tenant_id}/${video.id}`;
-    await uploadOutputTree(capRoot, `${outputPrefix}/hls-aes`);
+    await uploadOutputTree(capRoot, `${outputPrefix}/hls-aes`, signal);
+    if (signal.aborted) throw new OwnershipLostError("captions");
 
     await markCaptionsReady(job.video_id, [captions.lang]);
     logger.info(`[captions ${job.video_id}] ready (${captions.lang})`);

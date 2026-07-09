@@ -56,12 +56,15 @@ class S3UploadService {
   }
 
   /** Worker: stream the original from S3 to a local file (same-region = free egress). */
-  async downloadToFile(key: string, destPath: string): Promise<void> {
+  /** Abortable: `signal` cancels both the S3 request and the local stream pipe,
+   *  so a worker that loses its claim mid-download stops pulling bytes at once. */
+  async downloadToFile(key: string, destPath: string, signal?: AbortSignal): Promise<void> {
     const out = await this.client.send(
-      new GetObjectCommand({ Bucket: config.UPLOAD_BUCKET, Key: key })
+      new GetObjectCommand({ Bucket: config.UPLOAD_BUCKET, Key: key }),
+      { abortSignal: signal }
     );
     if (!out.Body) throw new Error(`S3 object ${key} has no body`);
-    await pipeline(out.Body as Readable, createWriteStream(destPath));
+    await pipeline(out.Body as Readable, createWriteStream(destPath), { signal });
   }
 
   /**

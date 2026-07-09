@@ -118,8 +118,8 @@ export const markReadyAndEnqueue = async (
   outputBytes: number,
   durationSeconds: number,
   opts: { enqueueCaptions: boolean; enqueueDownload: boolean }
-): Promise<void> => {
-  await db.transaction().execute(async (trx) => {
+): Promise<boolean> => {
+  return db.transaction().execute(async (trx) => {
     const res = await sql`
       UPDATE videos SET
         status='ready', stage=NULL, progress=100,
@@ -130,7 +130,8 @@ export const markReadyAndEnqueue = async (
       WHERE id=${id} AND locked_by=${workerId} AND status='processing'
     `.execute(trx);
     // Only seed jobs if we actually owned + flipped the row (reaper safety).
-    if (Number(res.numAffectedRows ?? 0n) === 0) return;
+    // Returns whether the flip landed so the caller can log the truth.
+    if (Number(res.numAffectedRows ?? 0n) === 0) return false;
 
     const kinds: Array<"CAPTIONS" | "DOWNLOAD"> = [];
     if (opts.enqueueCaptions) kinds.push("CAPTIONS");
@@ -141,6 +142,7 @@ export const markReadyAndEnqueue = async (
         VALUES (${ulid()}, ${id}, ${tenantId}, ${kind}::video_job_kind, 'queued', now(), now())
       `.execute(trx);
     }
+    return true;
   });
 };
 
@@ -200,14 +202,16 @@ export const releaseJobClaim = async (id: string, workerId: string): Promise<voi
   `.execute(db);
 };
 
-/** DONE: terminal success for one artifact. */
-export const markJobDone = async (id: string, workerId: string): Promise<void> => {
-  await sql`
+/** DONE: terminal success for one artifact. Returns whether the write landed
+ *  (false = the claim was lost; the caller logs the truth instead of "done"). */
+export const markJobDone = async (id: string, workerId: string): Promise<boolean> => {
+  const result = await sql`
     UPDATE video_jobs SET
       status='done', locked_by=NULL, locked_at=NULL, heartbeat_at=NULL,
       error=NULL, updated_at=now()
     WHERE id=${id} AND locked_by=${workerId} AND status='processing'
   `.execute(db);
+  return Number(result.numAffectedRows ?? 0n) > 0;
 };
 
 /** FAIL or REQUEUE a background job. Past max_attempts → 'failed' AND flips the
@@ -307,27 +311,35 @@ export const reapStale = async (): Promise<number> => {
 };
 
 /**
- * Cancelled videos still inside the artifact-sweep window: recent enough that R2
- * output objects may exist (or still land from a straggling upload), old enough
- * (15 min) that an in-flight abort has settled. Bounded to 7 days so the sweep
- * never scans deep history; within the window re-LISTing an already-swept (empty)
- * prefix is a cheap no-op. The worker sweeps these at startup and before idle
- * self-termination; R2 reclaim lives on workers because only they have R2 reach
- * (the orchestrator Lambda is in-VPC with no internet egress).
+ * One keyset page of cancelled videos inside the artifact-sweep window: recent
+ * enough that R2 output objects may exist (or still land from a straggling
+ * upload), old enough (15 min) that an in-flight abort has settled. Bounded to
+ * 7 days so the sweep never scans deep history; within the window re-LISTing an
+ * already-swept (empty) prefix is a cheap no-op. Keyset pagination (ASC on
+ * (updated_at, id), strictly-after cursor) lets the caller DRAIN the whole
+ * window even when a burst cancels more rows than one page: a fixed LIMIT with
+ * no cursor would starve the tail and permanently leak its artifacts. The
+ * worker sweeps at startup and before idle self-termination; R2 reclaim lives
+ * on workers because only they have R2 reach (the orchestrator Lambda is
+ * in-VPC with no internet egress).
  */
-export const listRecentCancelled = async (): Promise<
-  Array<{ id: string; tenant_id: string; output_prefix: string | null }>
-> => {
-  const result = await sql<{
-    id: string;
-    tenant_id: string;
-    output_prefix: string | null;
-  }>`
-    SELECT id, tenant_id, output_prefix FROM videos
+export interface CancelledSweepRow {
+  id: string;
+  tenant_id: string;
+  output_prefix: string | null;
+  updated_at: Date;
+}
+export const listCancelledPage = async (
+  after: { updatedAt: Date; id: string },
+  limit = 200
+): Promise<CancelledSweepRow[]> => {
+  const result = await sql<CancelledSweepRow>`
+    SELECT id, tenant_id, output_prefix, updated_at FROM videos
     WHERE status='cancelled'
       AND updated_at BETWEEN now() - interval '7 days' AND now() - interval '15 minutes'
-    ORDER BY updated_at DESC
-    LIMIT 200
+      AND (updated_at, id) > (${after.updatedAt}, ${after.id})
+    ORDER BY updated_at ASC, id ASC
+    LIMIT ${limit}
   `.execute(db);
   return result.rows;
 };

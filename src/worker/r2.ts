@@ -9,6 +9,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import config from "../config";
+import { OwnershipLostError } from "../encoding/exec";
 import { R2_DOWNLOADS_BUCKET } from "../utils/const";
 import logger from "../utils/logger";
 
@@ -89,12 +90,16 @@ export interface UploadOutputResult {
  */
 export const uploadOutputTree = async (
   outputDir: string,
-  outputPrefix: string
+  outputPrefix: string,
+  signal?: AbortSignal
 ): Promise<UploadOutputResult> => {
   const files = await walk(outputDir);
   let bytes = 0;
 
   await mapPool(files, 8, async (filePath) => {
+    // Per-file abort check: a claim lost mid-upload stops within one file (a few
+    // MB segment) instead of shipping the rest of a multi-GB tree to R2.
+    if (signal?.aborted) throw new OwnershipLostError("upload-output");
     const rel = path.relative(outputDir, filePath).split(path.sep).join("/");
     const key = `${outputPrefix}/${rel}`;
     const size = (await stat(filePath)).size;
@@ -107,7 +112,8 @@ export const uploadOutputTree = async (
         ContentLength: size,
         ContentType: contentTypeFor(filePath),
         CacheControl: cacheControlFor(filePath),
-      })
+      }),
+      { abortSignal: signal }
     );
   });
 
@@ -121,7 +127,11 @@ export const uploadOutputTree = async (
  * full unencrypted video, served only via a short-lived presigned GET. No public
  * cache headers (the object is private).
  */
-export const uploadProcessedDownload = async (key: string, filePath: string): Promise<void> => {
+export const uploadProcessedDownload = async (
+  key: string,
+  filePath: string,
+  signal?: AbortSignal
+): Promise<void> => {
   const size = (await stat(filePath)).size;
   await r2.send(
     new PutObjectCommand({
@@ -130,7 +140,8 @@ export const uploadProcessedDownload = async (key: string, filePath: string): Pr
       Body: createReadStream(filePath),
       ContentLength: size,
       ContentType: "video/mp4",
-    })
+    }),
+    { abortSignal: signal }
   );
   logger.info(`[r2] uploaded processed download (${size} bytes) → ${R2_DOWNLOADS_BUCKET}/${key}`);
 };
@@ -164,12 +175,19 @@ export const deleteVideoArtifacts = async (
     if (keys.length > 0) {
       // DeleteObjects caps at 1000 keys; ListObjectsV2 pages are <=1000, so one
       // delete per page is always within the limit.
-      await r2.send(
+      const res = await r2.send(
         new DeleteObjectsCommand({
           Bucket: config.R2_BUCKET,
           Delete: { Objects: keys.map((Key) => ({ Key })), Quiet: true },
         })
       );
+      // Quiet mode still reports per-key failures; surface them so the caller's
+      // per-video catch logs it and the next in-window sweep retries.
+      if (res.Errors && res.Errors.length > 0) {
+        throw new Error(
+          `DeleteObjects failed for ${res.Errors.length}/${keys.length} key(s), first: ${res.Errors[0]?.Key} (${res.Errors[0]?.Message})`
+        );
+      }
       deleted += keys.length;
     }
     token = listed.IsTruncated ? listed.NextContinuationToken : undefined;

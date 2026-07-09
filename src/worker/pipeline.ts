@@ -63,8 +63,8 @@ export const runPrimary = async (
     const ext = video.source_key.split(".").pop() || "mp4";
     const inputPath = path.join(sourceDir, `original.${ext}`);
 
-    // ── download source (same-region S3 → free egress) ──
-    await s3UploadService.downloadToFile(video.source_key, inputPath);
+    // ── download source (same-region S3 → free egress; abortable) ──
+    await s3UploadService.downloadToFile(video.source_key, inputPath, signal);
 
     // ── 1. probe + orientation → ladder (capped to source bitrate) ──
     const probed = await probe(inputPath, signal);
@@ -104,6 +104,7 @@ export const runPrimary = async (
     // Captions are decoupled: the master here has NO subtitle rendition. The
     // CAPTIONS job re-uploads master.m3u8 (with subs) once whisper finishes.
     await hb.update("packaging", 78);
+    if (signal.aborted) throw new OwnershipLostError("primary");
     const key = await contentKeyService.generateAndStore(video.tenant_id, video.id);
     await packageHlsAes({
       outputDir,
@@ -120,9 +121,12 @@ export const runPrimary = async (
     if (signal.aborted) throw new OwnershipLostError("primary");
 
     // ── 4. uploading_output → R2 (video is playable once this completes) ──
+    // Boundary + signal-aware upload: a claim lost here must NOT ship a full
+    // multi-GB tree (billed egress) for a video another actor now owns.
     await hb.update("uploading_output", 92);
+    if (signal.aborted) throw new OwnershipLostError("primary");
     const outputPrefix = video.output_prefix ?? `${video.tenant_id}/${video.id}`;
-    const { bytes: outputBytes } = await uploadOutputTree(outputDir, outputPrefix);
+    const { bytes: outputBytes } = await uploadOutputTree(outputDir, outputPrefix, signal);
 
     const cfg = (video.pipeline_config ?? {}) as PipelineConfig;
     return {

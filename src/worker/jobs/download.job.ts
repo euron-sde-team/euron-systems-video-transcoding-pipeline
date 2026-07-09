@@ -33,7 +33,7 @@ export const runDownloadJob = async (job: VideoJobRow, signal: AbortSignal): Pro
   try {
     const ext = video.source_key.split(".").pop() || "mp4";
     const inputPath = path.join(sourceDir, `original.${ext}`);
-    await s3UploadService.downloadToFile(video.source_key, inputPath);
+    await s3UploadService.downloadToFile(video.source_key, inputPath, signal);
 
     const probed = await probe(inputPath, signal);
     // Scale to the top rung's dimensions (same deterministic ladder PRIMARY used).
@@ -53,10 +53,17 @@ export const runDownloadJob = async (job: VideoJobRow, signal: AbortSignal): Pro
 
     // Guard the private-bucket upload + status flip: if the claim was lost in the
     // window after the encode finished, bail before publishing the MP4 or marking
-    // it ready (markMp4Ready is unguarded).
+    // it ready (markMp4Ready is unguarded). The upload itself is signal-aware
+    // (abort kills the PUT mid-flight), and the re-check after it closes the
+    // minutes-wide window between a long upload and the status flip.
     if (signal.aborted) throw new OwnershipLostError("download");
 
-    await uploadProcessedDownload(processedDownloadKey(video.tenant_id, video.id), processed);
+    await uploadProcessedDownload(
+      processedDownloadKey(video.tenant_id, video.id),
+      processed,
+      signal
+    );
+    if (signal.aborted) throw new OwnershipLostError("download");
 
     await markMp4Ready(job.video_id);
     logger.info(`[download ${job.video_id}] ready`);

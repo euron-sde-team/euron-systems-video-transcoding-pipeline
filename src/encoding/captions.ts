@@ -2,7 +2,7 @@ import { access } from "fs/promises";
 import path from "path";
 import config from "../config";
 import logger from "../utils/logger";
-import { run } from "./exec";
+import { OwnershipLostError, run } from "./exec";
 
 export interface CaptionsResult {
   vttFile: string;
@@ -55,6 +55,10 @@ export const generateCaptions = async (
     await access(vttFile);
     return { vttFile, lang };
   } catch (err) {
+    // A cancellation abort is NOT a whisper failure: rethrow it so routine
+    // lecture-delete cancels never pollute the whisper-breakage ERROR signal
+    // below (which operators must be able to trust).
+    if (err instanceof OwnershipLostError) throw err;
     // ERROR, not warn: a swallowed warn is exactly why captions silently never
     // generated. Surface the real cause (e.g. missing model / binary) loudly.
     logger.error(`[captions] generation failed (non-fatal, video still ready): ${(err as Error).message}`);

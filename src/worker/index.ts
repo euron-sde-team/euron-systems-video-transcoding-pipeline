@@ -10,7 +10,7 @@ import {
   failOrRequeue,
   failOrRequeueJob,
   jobHeartbeat,
-  listRecentCancelled,
+  listCancelledPage,
   markJobDone,
   markReadyAndEnqueue,
   releaseClaim,
@@ -59,16 +59,25 @@ const selfTerminate = (): never => {
  */
 async function sweepCancelledArtifacts(): Promise<void> {
   try {
-    const rows = await listRecentCancelled();
-    for (const row of rows) {
-      if (shuttingDown) return;
-      const prefix = row.output_prefix ?? `${row.tenant_id}/${row.id}`;
-      try {
-        await deleteVideoArtifacts(prefix, processedDownloadKey(row.tenant_id, row.id));
-      } catch (e) {
-        // Best-effort: a failed delete is retried on the next sweep in-window.
-        logger.warn(`[worker] artifact sweep failed for cancelled video ${row.id}: ${e}`);
+    const PAGE = 200;
+    // Keyset-drain the WHOLE 7-day window (no starvation on cancel bursts).
+    let cursor = { updatedAt: new Date(0), id: "" };
+    for (;;) {
+      const rows = await listCancelledPage(cursor, PAGE);
+      if (rows.length === 0) return;
+      for (const row of rows) {
+        if (shuttingDown) return;
+        const prefix = row.output_prefix ?? `${row.tenant_id}/${row.id}`;
+        try {
+          await deleteVideoArtifacts(prefix, processedDownloadKey(row.tenant_id, row.id));
+        } catch (e) {
+          // Best-effort: a failed delete is retried on the next sweep in-window.
+          logger.warn(`[worker] artifact sweep failed for cancelled video ${row.id}: ${e}`);
+        }
       }
+      const last = rows[rows.length - 1] as (typeof rows)[number];
+      cursor = { updatedAt: last.updated_at, id: last.id };
+      if (rows.length < PAGE) return;
     }
   } catch (e) {
     logger.warn(`[worker] artifact sweep query failed: ${e}`);
@@ -106,7 +115,7 @@ async function runVideo(video: VideoRow): Promise<void> {
     logger.info(`[worker] claimed video ${video.id} (attempt ${video.attempts}/${video.max_attempts})`);
     const outcome = await runPrimary(video, WORKER_ID, hb, ac.signal);
     hb.stop();
-    await markReadyAndEnqueue(
+    const flipped = await markReadyAndEnqueue(
       video.id,
       WORKER_ID,
       video.tenant_id,
@@ -114,9 +123,15 @@ async function runVideo(video: VideoRow): Promise<void> {
       outcome.durationSec,
       { enqueueCaptions: outcome.enqueueCaptions, enqueueDownload: true }
     );
-    logger.info(
-      `[worker] ready ${video.id} (captions=${outcome.enqueueCaptions ? "queued" : "skipped"}, download queued)`
-    );
+    if (flipped) {
+      logger.info(
+        `[worker] ready ${video.id} (captions=${outcome.enqueueCaptions ? "queued" : "skipped"}, download queued)`
+      );
+    } else {
+      // Claim lost at the finish line (cancelled/reaped/re-claimed): the guarded
+      // write no-oped, another actor's state wins. Log the truth, never "ready".
+      logger.warn(`[worker] ready write no-oped for ${video.id} (claim lost at finish)`);
+    }
   } catch (err) {
     hb.stop();
     const msg = (err as Error).message ?? String(err);
@@ -153,8 +168,9 @@ async function runBackgroundJob(job: VideoJobRow): Promise<void> {
     if (job.kind === "CAPTIONS") await runCaptionsJob(job, ac.signal);
     else await runDownloadJob(job, ac.signal);
     clearInterval(timer);
-    await markJobDone(job.id, WORKER_ID);
-    logger.info(`[worker] ${job.kind} job ${job.id} done`);
+    const done = await markJobDone(job.id, WORKER_ID);
+    if (done) logger.info(`[worker] ${job.kind} job ${job.id} done`);
+    else logger.warn(`[worker] ${job.kind} job ${job.id} done-write no-oped (claim lost at finish)`);
   } catch (err) {
     clearInterval(timer);
     const msg = (err as Error).message ?? String(err);
@@ -215,7 +231,10 @@ async function run(): Promise<void> {
       clearInterval(watcher);
       // Final artifact sweep before the instance goes away: catches any video
       // cancelled during this worker's lifetime (including one it just aborted).
-      await sweepCancelledArtifacts();
+      // Deadline-capped: the R2 client has no request timeouts, and a hung socket
+      // here (Spot watcher already stopped) would block self-termination forever;
+      // the process exit below reaps any dangling sweep work.
+      await Promise.race([sweepCancelledArtifacts(), sleep(5 * 60_000)]);
       selfTerminate();
     }
     await sleep(config.POLL_MS);
