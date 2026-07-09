@@ -149,16 +149,23 @@ export const markReadyAndEnqueue = async (
 // (locked_by, status='processing') so a reaped worker cannot clobber a job a
 // new worker now owns.
 
-/** CLAIM: one worker atomically grabs one 'queued' background job. Null if none. */
+/** CLAIM: one worker atomically grabs one 'queued' background job. Null if none.
+ *  Jobs whose parent video was cancelled (lecture deleted, reconcile-retired) are
+ *  never claimed: their artifacts would be garbage and could recreate R2 objects
+ *  the cancelled-artifact sweep already reclaimed. The orchestrator also marks
+ *  such jobs 'cancelled' (JOB_CANCEL_SQL); this guard covers the race window. */
 export const claimNextJob = async (workerId: string): Promise<VideoJobRow | null> => {
   const result = await sql<VideoJobRow>`
     UPDATE video_jobs SET
       status='processing', locked_by=${workerId}, locked_at=now(), heartbeat_at=now(),
       attempts=attempts+1, updated_at=now()
     WHERE id = (
-      SELECT id FROM video_jobs
-      WHERE status='queued'
-      ORDER BY created_at
+      SELECT j.id FROM video_jobs j
+      WHERE j.status='queued'
+        AND NOT EXISTS (
+          SELECT 1 FROM videos v WHERE v.id = j.video_id AND v.status = 'cancelled'
+        )
+      ORDER BY j.created_at
       FOR UPDATE SKIP LOCKED
       LIMIT 1
     )
@@ -167,11 +174,18 @@ export const claimNextJob = async (workerId: string): Promise<VideoJobRow | null
   return result.rows[0] ?? null;
 };
 
-/** HEARTBEAT: keep a claimed job alive so the 10-min reaper does not reclaim it. */
+/** HEARTBEAT: keep a claimed job alive so the 10-min reaper does not reclaim it.
+ *  Also fails (0 rows) when the parent video was cancelled mid-job: the worker
+ *  wires that to its AbortController, so a running captions/download job of a
+ *  freshly cancelled video is SIGKILLed instead of finishing, re-uploading subs +
+ *  master to a swept R2 prefix, and flipping artifact statuses on a dead video. */
 export const jobHeartbeat = async (id: string, workerId: string): Promise<boolean> => {
   const result = await sql`
     UPDATE video_jobs SET heartbeat_at=now(), updated_at=now()
     WHERE id=${id} AND locked_by=${workerId} AND status='processing'
+      AND NOT EXISTS (
+        SELECT 1 FROM videos v WHERE v.id = video_jobs.video_id AND v.status = 'cancelled'
+      )
   `.execute(db);
   return Number(result.numAffectedRows ?? 0n) > 0;
 };
@@ -290,6 +304,32 @@ export const failOrRequeue = async (
 export const reapStale = async (): Promise<number> => {
   const result = await sql.raw(REAP_SQL).execute(db);
   return Number(result.numAffectedRows ?? 0n);
+};
+
+/**
+ * Cancelled videos still inside the artifact-sweep window: recent enough that R2
+ * output objects may exist (or still land from a straggling upload), old enough
+ * (15 min) that an in-flight abort has settled. Bounded to 7 days so the sweep
+ * never scans deep history; within the window re-LISTing an already-swept (empty)
+ * prefix is a cheap no-op. The worker sweeps these at startup and before idle
+ * self-termination; R2 reclaim lives on workers because only they have R2 reach
+ * (the orchestrator Lambda is in-VPC with no internet egress).
+ */
+export const listRecentCancelled = async (): Promise<
+  Array<{ id: string; tenant_id: string; output_prefix: string | null }>
+> => {
+  const result = await sql<{
+    id: string;
+    tenant_id: string;
+    output_prefix: string | null;
+  }>`
+    SELECT id, tenant_id, output_prefix FROM videos
+    WHERE status='cancelled'
+      AND updated_at BETWEEN now() - interval '7 days' AND now() - interval '15 minutes'
+    ORDER BY updated_at DESC
+    LIMIT 200
+  `.execute(db);
+  return result.rows;
 };
 
 /** Backlog size, scale-up signal. */

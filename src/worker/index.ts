@@ -10,6 +10,7 @@ import {
   failOrRequeue,
   failOrRequeueJob,
   jobHeartbeat,
+  listRecentCancelled,
   markJobDone,
   markReadyAndEnqueue,
   releaseClaim,
@@ -17,12 +18,14 @@ import {
   type VideoJobRow,
   type VideoRow,
 } from "../db/queue";
+import { processedDownloadKey } from "../utils/const";
 import logger from "../utils/logger";
 import { Heartbeat } from "./heartbeat";
 import { runCaptionsJob } from "./jobs/captions.job";
 import { runDownloadJob } from "./jobs/download.job";
 import { checkSpotInterruption, getInstanceId, logMetadataMode } from "./metadata";
 import { runPrimary } from "./pipeline";
+import { deleteVideoArtifacts } from "./r2";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -45,6 +48,32 @@ const selfTerminate = (): never => {
   }
   process.exit(0);
 };
+
+/**
+ * Reclaim R2 artifacts of recently cancelled videos: the public output tree
+ * (HLS segments, manifests, thumbnails, captions) plus the private processed
+ * MP4. Runs at startup (fire-and-forget) and before idle self-termination
+ * (awaited), so the worker that just aborted a cancelled mid-transcode video
+ * sweeps its own partial upload on the way out. Idempotent per video; the
+ * SOURCE object is tenant-admin's cleanup job, not this one.
+ */
+async function sweepCancelledArtifacts(): Promise<void> {
+  try {
+    const rows = await listRecentCancelled();
+    for (const row of rows) {
+      if (shuttingDown) return;
+      const prefix = row.output_prefix ?? `${row.tenant_id}/${row.id}`;
+      try {
+        await deleteVideoArtifacts(prefix, processedDownloadKey(row.tenant_id, row.id));
+      } catch (e) {
+        // Best-effort: a failed delete is retried on the next sweep in-window.
+        logger.warn(`[worker] artifact sweep failed for cancelled video ${row.id}: ${e}`);
+      }
+    }
+  } catch (e) {
+    logger.warn(`[worker] artifact sweep query failed: ${e}`);
+  }
+}
 
 /** Spot-interruption / SIGTERM path: hand the current claim back WITHOUT a penalty, then exit fast. */
 const releaseAndExit = async (): Promise<void> => {
@@ -143,6 +172,10 @@ async function run(): Promise<void> {
   logMetadataMode(WORKER_ID);
   await waitForDBConnection();
 
+  // Startup sweep, fire-and-forget so it never delays the first claim (playback
+  // priority); the awaited pre-terminate sweep below is the reliable pass.
+  void sweepCancelledArtifacts();
+
   const watcher = setInterval(() => {
     void checkSpotInterruption()
       .then((notice) => {
@@ -180,6 +213,9 @@ async function run(): Promise<void> {
     if (Date.now() - idleSince > config.IDLE_GRACE_MS) {
       logger.info(`[worker] idle ${config.IDLE_GRACE_MS}ms with empty queue, self-terminating`);
       clearInterval(watcher);
+      // Final artifact sweep before the instance goes away: catches any video
+      // cancelled during this worker's lifetime (including one it just aborted).
+      await sweepCancelledArtifacts();
       selfTerminate();
     }
     await sleep(config.POLL_MS);

@@ -2,6 +2,7 @@ import { Client } from "pg";
 import config from "../config";
 import {
   COUNT_QUEUE_SQL,
+  JOB_CANCEL_SQL,
   JOB_COUNT_SQL,
   JOB_REAP_SQL,
   JOB_RECONCILE_SQL,
@@ -71,6 +72,9 @@ export const handler = async (): Promise<OrchestratorResult> => {
     const reapRes = await db.query(REAP_SQL);
     const jobReapRes = await db.query(JOB_REAP_SQL);
     await db.query(JOB_RECONCILE_SQL);
+    // Retire queued jobs of cancelled parents BEFORE counting the backlog, so the
+    // launch math never provisions workers for jobs claimNextJob refuses anyway.
+    await db.query(JOB_CANCEL_SQL);
     const reaped = (reapRes.rowCount ?? 0) + (jobReapRes.rowCount ?? 0);
 
     const countRes = await db.query<{ queued: number; in_progress: number }>(COUNT_QUEUE_SQL);

@@ -76,3 +76,18 @@ export const JOB_RECONCILE_SQL = `
     WHERE j.video_id=v.id AND j.kind='DOWNLOAD' AND j.status='failed'
       AND v.mp4_status IN ('pending','processing');
 `;
+
+/** Retire queued artifact jobs whose parent video was cancelled (lecture deleted,
+ *  reconcile-retired). claimNextJob already refuses them; this flips them to a
+ *  terminal 'cancelled' so JOB_COUNT_SQL's backlog stays honest and the scale-up
+ *  controller never launches workers for unclaimable jobs. Runs BEFORE the counts
+ *  each tick. Running jobs are not touched here: their heartbeat guard aborts them
+ *  worker-side, after which failOrRequeueJob requeues and this catches them. */
+export const JOB_CANCEL_SQL = `
+  UPDATE video_jobs j
+  SET status='cancelled'::video_job_status,
+      locked_by=NULL, locked_at=NULL, heartbeat_at=NULL,
+      error='parent video cancelled', updated_at=now()
+  WHERE j.status='queued'
+    AND EXISTS (SELECT 1 FROM videos v WHERE v.id = j.video_id AND v.status = 'cancelled')
+`;

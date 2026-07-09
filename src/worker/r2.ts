@@ -1,7 +1,13 @@
 import { createReadStream } from "fs";
 import { readdir, stat } from "fs/promises";
 import path from "path";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  DeleteObjectCommand,
+  DeleteObjectsCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import config from "../config";
 import { R2_DOWNLOADS_BUCKET } from "../utils/const";
 import logger from "../utils/logger";
@@ -127,4 +133,54 @@ export const uploadProcessedDownload = async (key: string, filePath: string): Pr
     })
   );
   logger.info(`[r2] uploaded processed download (${size} bytes) → ${R2_DOWNLOADS_BUCKET}/${key}`);
+};
+
+/**
+ * Delete every object under `{outputPrefix}/` in the public output bucket PLUS the
+ * processed-download MP4 in the private downloads bucket. Cleanup path for
+ * CANCELLED videos only (terminal state; nothing re-reads these objects, and a
+ * cancelled row can never be re-enqueued). Idempotent: an already-empty prefix is
+ * a no-op LIST and deleting a missing key is a success in S3/R2. The trailing
+ * slash on the prefix scopes the LIST to exactly one video's tree.
+ * Returns how many output-bucket objects were deleted.
+ */
+export const deleteVideoArtifacts = async (
+  outputPrefix: string,
+  downloadKey: string
+): Promise<number> => {
+  let deleted = 0;
+  let token: string | undefined;
+  do {
+    const listed = await r2.send(
+      new ListObjectsV2Command({
+        Bucket: config.R2_BUCKET,
+        Prefix: `${outputPrefix}/`,
+        ContinuationToken: token,
+      })
+    );
+    const keys = (listed.Contents ?? [])
+      .map((o) => o.Key)
+      .filter((k): k is string => !!k);
+    if (keys.length > 0) {
+      // DeleteObjects caps at 1000 keys; ListObjectsV2 pages are <=1000, so one
+      // delete per page is always within the limit.
+      await r2.send(
+        new DeleteObjectsCommand({
+          Bucket: config.R2_BUCKET,
+          Delete: { Objects: keys.map((Key) => ({ Key })), Quiet: true },
+        })
+      );
+      deleted += keys.length;
+    }
+    token = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+  } while (token);
+
+  await r2.send(
+    new DeleteObjectCommand({ Bucket: R2_DOWNLOADS_BUCKET, Key: downloadKey })
+  );
+
+  if (deleted > 0) {
+    logger.info(`[r2] deleted ${deleted} object(s) under ${outputPrefix}/ (cancelled video)`);
+  }
+  return deleted;
 };

@@ -204,7 +204,15 @@ class VideosRepository {
     return Number(result.numUpdatedRows ?? 0n) > 0;
   }
 
-  /** CANCEL: only pre-terminal, non-processing states (uploading/uploaded/failed). */
+  /**
+   * CANCEL: every pre-ready state, INCLUDING 'processing'. Cancelling mid-transcode
+   * is safe: the worker's guarded heartbeat (WHERE status='processing') returns 0
+   * rows, fires its AbortController, and SIGKILLs the in-flight ffmpeg within one
+   * heartbeat interval; every terminal worker write (markReadyAndEnqueue,
+   * failOrRequeue, releaseClaim) is equally guarded, so nothing resurrects or
+   * clobbers the cancelled row. 'ready' stays excluded (retiring a ready video is
+   * the tenant-admin reconcile's job, fully reference-guarded).
+   */
   async cancel(id: string, tenantId: string): Promise<boolean> {
     const result = await db
       .updateTable("videos")
@@ -214,6 +222,7 @@ class VideosRepository {
       .where("status", "in", [
         video_status.uploading,
         video_status.uploaded,
+        video_status.processing,
         video_status.failed,
       ])
       .executeTakeFirst();
