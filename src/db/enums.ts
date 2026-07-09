@@ -1879,3 +1879,20 @@ export const webinar_type = {
     SERIES: "SERIES"
 } as const;
 export type webinar_type = (typeof webinar_type)[keyof typeof webinar_type];
+export const demo_availability_day = {
+    MONDAY: "MONDAY",
+    TUESDAY: "TUESDAY",
+    WEDNESDAY: "WEDNESDAY",
+    THURSDAY: "THURSDAY",
+    FRIDAY: "FRIDAY",
+    SATURDAY: "SATURDAY",
+    SUNDAY: "SUNDAY"
+} as const;
+export type demo_availability_day = (typeof demo_availability_day)[keyof typeof demo_availability_day];
+export const demo_booking_status = {
+    CONFIRMED: "CONFIRMED",
+    CANCELLED: "CANCELLED",
+    COMPLETED: "COMPLETED",
+    NO_SHOW: "NO_SHOW"
+} as const;
+export type demo_booking_status = (typeof demo_booking_status)[keyof typeof demo_booking_status];

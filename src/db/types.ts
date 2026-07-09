@@ -4,7 +4,7 @@ export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
   : ColumnType<T, T | undefined, T>;
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
-import type { video_status, video_stage, protection_mode, watermark_mode, orientation, key_wrap_scheme, video_artifact_status, video_job_kind, video_job_status, tenant_video_provider, addon_subscription_status, admin_user_status, affiliate_commission_status, affiliate_withdrawal_status, ai_assistant_role, approval_workflow_type, assignment_content_type, assignment_scope, assignment_status, avani_interview_source, avani_interview_status, batch_item_type, batch_session_schedule_status, batch_status, billing_cycle, blog_author_type, blog_publish_status, blog_section, book_conversion_status, book_file_format, book_source_type, book_status, bookmark_type, bundle_item_type, bundle_status, byte_cta_type, byte_processing_status, byte_reaction_type, byte_status, campaign_audience_type, campaign_channel, campaign_status, cart_item_type, certificate_status, code_problem_difficulty, code_problem_status, code_submission_type, code_submission_verdict, community_attachment_type, community_event_registration_status, community_event_status, community_feedback_status, community_member_status, community_notification_type, community_post_status, community_post_type, community_qa_status, community_reaction_type, community_role, community_share_type, community_type, constraint_type, coupon_discount_type, course_difficulty, course_mode, course_status, course_type, crm_activity_direction, crm_activity_type, crm_campaign_audience_type, crm_campaign_channel, crm_campaign_recipient_status, crm_campaign_status, crm_contact_source, crm_contact_status, crm_deal_stage_type, crm_deal_status, crm_subject_type, crm_task_priority, crm_task_status, crm_whatsapp_direction, crm_whatsapp_message_status, crm_whatsapp_message_type, discount_type, domain_status, domain_type, email_campaign_status, email_message_category, email_message_status, email_reputation_event_trigger, email_sender_identity_status, email_sending_domain_status, email_sending_tenant_status, email_suppression_reason, enrollment_source, enrollment_status, entitlement_sources, euri_chat_status, euri_file_type, euri_message_mode, euri_message_sender, euri_message_type, euri_usage_log_status, euri_usage_log_type, expense_approval_action, expense_status, gateway_connection_status, gateway_mode, hrms_asset_status, hrms_asset_type, hrms_attendance_status, hrms_boarding_process_status, hrms_boarding_task_status, hrms_boarding_type, hrms_document_status, hrms_document_type, hrms_employee_status, hrms_exit_document_type, hrms_exit_settlement_status, hrms_exit_status, hrms_exit_type, hrms_gender, hrms_leave_request_status, hrms_offer_letter_status, hrms_payroll_record_status, hrms_payroll_run_status, hrms_salary_component_type, hub_availability_day, hub_booking_status, hub_delivery_mode, hub_digital_file_type, hub_dm_message_type, hub_dm_sender_type, hub_dm_status, hub_meeting_provider, hub_notification_type, hub_product_status, hub_product_type, internal_actor_type, inv_discount_type, inv_invoice_status, inv_payment_method, inv_recurrence_frequency, inv_recurring_status, inv_tax_jurisdiction, invoice_status, invoice_type, job_posting_status, language_ai_proficiency_level, language_ai_session_status, lesson_resource_type, lesson_type, linkable_content_type, live_quiz_status, live_session_status, member_ai_wallet_transaction_type, member_notification_type, member_payment_detail_type, member_status, member_wallet_transaction_type, notification_broadcast_status, notification_broadcast_target_type, notification_channel, order_status, order_type, partner_benefit_status, partner_lead_status, partner_lead_type, partner_status, payment_receipt_status, payment_webhook_status, payout_settlement_mode, payout_status, plan_type, platform_blog_author_status, platform_blog_comment_status, platform_blog_post_status, platform_campaign_audience_type, platform_campaign_channel, platform_campaign_recipient_status, platform_campaign_status, platform_support_sender_type, platform_support_ticket_status, platform_webinar_event_type, platform_webinar_meeting_provider, platform_webinar_notification_channel, platform_webinar_notification_status, platform_webinar_notification_type, platform_webinar_registration_status, platform_webinar_status, practice_session_status, price_entity_type, pricing_frequency, purchase_mode, quiz_attempt_status, quiz_question_type, quiz_scope, quiz_status, receipt_scan_status, refund_status, resource_status, resume_component_status, resume_status, roadmap_status, sat_vocab_progress_status, staff_membership_status, submission_content_type, submission_status, subscription_status, support_ticket_priority, support_ticket_sender_type, support_ticket_status, tax_mode, tenant_addon_event_type, tenant_addon_source, tenant_addon_status, tenant_app_event_type, tenant_app_source, tenant_app_status, tenant_bulk_import_scope_type, tenant_bulk_import_source, tenant_bulk_import_status, tenant_member_status, tenant_payout_method_type, tenant_status, tenant_subscription_status, tenant_user_status, test_attempt_module_status, test_attempt_status, test_mode, test_question_created_via, test_question_difficulty, test_question_status, test_question_type, test_series_access_mode, test_series_enrollment_source, test_series_enrollment_status, test_series_pricing_type, test_series_visibility, test_show_solutions, test_status, testimonial_status, track_asset_type, track_attachment_scope, track_custom_field_type, track_invitation_status, track_member_status, track_priority, track_project_member_role, track_project_status, track_task_status, track_team_member_role, track_user_status, track_user_type, usage_event_type, usage_scope_type, usage_window_type, video_processing_status, video_provider, vote_type, wallet_transaction_type, webhook_status, webinar_type } from "./enums";
+import type { video_status, video_stage, protection_mode, watermark_mode, orientation, key_wrap_scheme, video_artifact_status, video_job_kind, video_job_status, tenant_video_provider, addon_subscription_status, admin_user_status, affiliate_commission_status, affiliate_withdrawal_status, ai_assistant_role, approval_workflow_type, assignment_content_type, assignment_scope, assignment_status, avani_interview_source, avani_interview_status, batch_item_type, batch_session_schedule_status, batch_status, billing_cycle, blog_author_type, blog_publish_status, blog_section, book_conversion_status, book_file_format, book_source_type, book_status, bookmark_type, bundle_item_type, bundle_status, byte_cta_type, byte_processing_status, byte_reaction_type, byte_status, campaign_audience_type, campaign_channel, campaign_status, cart_item_type, certificate_status, code_problem_difficulty, code_problem_status, code_submission_type, code_submission_verdict, community_attachment_type, community_event_registration_status, community_event_status, community_feedback_status, community_member_status, community_notification_type, community_post_status, community_post_type, community_qa_status, community_reaction_type, community_role, community_share_type, community_type, constraint_type, coupon_discount_type, course_difficulty, course_mode, course_status, course_type, crm_activity_direction, crm_activity_type, crm_campaign_audience_type, crm_campaign_channel, crm_campaign_recipient_status, crm_campaign_status, crm_contact_source, crm_contact_status, crm_deal_stage_type, crm_deal_status, crm_subject_type, crm_task_priority, crm_task_status, crm_whatsapp_direction, crm_whatsapp_message_status, crm_whatsapp_message_type, discount_type, domain_status, domain_type, email_campaign_status, email_message_category, email_message_status, email_reputation_event_trigger, email_sender_identity_status, email_sending_domain_status, email_sending_tenant_status, email_suppression_reason, enrollment_source, enrollment_status, entitlement_sources, euri_chat_status, euri_file_type, euri_message_mode, euri_message_sender, euri_message_type, euri_usage_log_status, euri_usage_log_type, expense_approval_action, expense_status, gateway_connection_status, gateway_mode, hrms_asset_status, hrms_asset_type, hrms_attendance_status, hrms_boarding_process_status, hrms_boarding_task_status, hrms_boarding_type, hrms_document_status, hrms_document_type, hrms_employee_status, hrms_exit_document_type, hrms_exit_settlement_status, hrms_exit_status, hrms_exit_type, hrms_gender, hrms_leave_request_status, hrms_offer_letter_status, hrms_payroll_record_status, hrms_payroll_run_status, hrms_salary_component_type, hub_availability_day, hub_booking_status, hub_delivery_mode, hub_digital_file_type, hub_dm_message_type, hub_dm_sender_type, hub_dm_status, hub_meeting_provider, hub_notification_type, hub_product_status, hub_product_type, internal_actor_type, inv_discount_type, inv_invoice_status, inv_payment_method, inv_recurrence_frequency, inv_recurring_status, inv_tax_jurisdiction, invoice_status, invoice_type, job_posting_status, language_ai_proficiency_level, language_ai_session_status, lesson_resource_type, lesson_type, linkable_content_type, live_quiz_status, live_session_status, member_ai_wallet_transaction_type, member_notification_type, member_payment_detail_type, member_status, member_wallet_transaction_type, notification_broadcast_status, notification_broadcast_target_type, notification_channel, order_status, order_type, partner_benefit_status, partner_lead_status, partner_lead_type, partner_status, payment_receipt_status, payment_webhook_status, payout_settlement_mode, payout_status, plan_type, platform_blog_author_status, platform_blog_comment_status, platform_blog_post_status, platform_campaign_audience_type, platform_campaign_channel, platform_campaign_recipient_status, platform_campaign_status, platform_support_sender_type, platform_support_ticket_status, platform_webinar_event_type, platform_webinar_meeting_provider, platform_webinar_notification_channel, platform_webinar_notification_status, platform_webinar_notification_type, platform_webinar_registration_status, platform_webinar_status, practice_session_status, price_entity_type, pricing_frequency, purchase_mode, quiz_attempt_status, quiz_question_type, quiz_scope, quiz_status, receipt_scan_status, refund_status, resource_status, resume_component_status, resume_status, roadmap_status, sat_vocab_progress_status, staff_membership_status, submission_content_type, submission_status, subscription_status, support_ticket_priority, support_ticket_sender_type, support_ticket_status, tax_mode, tenant_addon_event_type, tenant_addon_source, tenant_addon_status, tenant_app_event_type, tenant_app_source, tenant_app_status, tenant_bulk_import_scope_type, tenant_bulk_import_source, tenant_bulk_import_status, tenant_member_status, tenant_payout_method_type, tenant_status, tenant_subscription_status, tenant_user_status, test_attempt_module_status, test_attempt_status, test_mode, test_question_created_via, test_question_difficulty, test_question_status, test_question_type, test_series_access_mode, test_series_enrollment_source, test_series_enrollment_status, test_series_pricing_type, test_series_visibility, test_show_solutions, test_status, testimonial_status, track_asset_type, track_attachment_scope, track_custom_field_type, track_invitation_status, track_member_status, track_priority, track_project_member_role, track_project_status, track_task_status, track_team_member_role, track_user_status, track_user_type, usage_event_type, usage_scope_type, usage_window_type, video_processing_status, video_provider, vote_type, wallet_transaction_type, webhook_status, webinar_type, demo_availability_day, demo_booking_status } from "./enums";
 
 export type addon_subscriptions = {
     id: string;
@@ -887,6 +887,19 @@ export type certificate_batches = {
     created_at: Generated<Timestamp>;
     updated_at: Timestamp;
 };
+export type certificate_templates = {
+    id: string;
+    tenant_id: string;
+    name: string;
+    page_size: Generated<string>;
+    orientation: Generated<string>;
+    background_asset_url: string | null;
+    layout: unknown;
+    is_default: Generated<boolean>;
+    status: Generated<string>;
+    created_at: Generated<Timestamp>;
+    updated_at: Generated<Timestamp>;
+};
 export type certificates = {
     id: string;
     tenant_id: string;
@@ -899,6 +912,8 @@ export type certificates = {
     created_at: Timestamp;
     updated_at: Timestamp;
     emailed_at: Timestamp | null;
+    certificate_template_id: string | null;
+    template_snapshot: unknown | null;
 };
 export type code_judge_audit_logs = {
     id: string;
@@ -1619,6 +1634,7 @@ export type courses = {
     thumbnail_key: string | null;
     course_type: Generated<course_type>;
     validity_days: Generated<number>;
+    certificate_template_id: string | null;
 };
 export type crm_activities = {
     id: string;
@@ -1874,6 +1890,65 @@ export type crm_whatsapp_messages = {
     sent_at: Timestamp | null;
     created_at: Generated<Timestamp>;
     updated_at: Timestamp;
+};
+export type demo_bookings = {
+    id: string;
+    host_admin_user_id: string;
+    lead_name: string;
+    lead_email: string;
+    lead_phone: string | null;
+    notes: string | null;
+    scheduled_at: Timestamp;
+    duration_minutes: Generated<number>;
+    timezone: Generated<string>;
+    status: Generated<demo_booking_status>;
+    google_event_id: string | null;
+    meeting_link: string | null;
+    created_at: Generated<Timestamp>;
+    updated_at: Generated<Timestamp>;
+    artifacts_fetched_at: Timestamp | null;
+    artifacts_status: Generated<string>;
+    meet_space_id: string | null;
+    notes_markdown: string | null;
+    recording_drive_file_id: string | null;
+    recording_drive_link: string | null;
+    recording_s3_key: string | null;
+    transcript_text: string | null;
+};
+export type demo_host_availability = {
+    id: string;
+    admin_user_id: string;
+    day_of_week: demo_availability_day;
+    start_time: string;
+    end_time: string;
+    timezone: Generated<string>;
+    is_active: Generated<boolean>;
+    created_at: Generated<Timestamp>;
+    updated_at: Generated<Timestamp>;
+};
+export type demo_host_blocked_slots = {
+    id: string;
+    admin_user_id: string;
+    blocked_date: string;
+    start_time: string | null;
+    end_time: string | null;
+    created_at: Generated<Timestamp>;
+};
+export type demo_host_calendar_connections = {
+    id: string;
+    admin_user_id: string;
+    google_email: string;
+    access_token: string;
+    refresh_token: string;
+    token_expires_at: Timestamp;
+    calendar_id: Generated<string>;
+    sync_enabled: Generated<boolean>;
+    needs_reauth: Generated<boolean>;
+    last_synced_at: Timestamp | null;
+    created_at: Generated<Timestamp>;
+    updated_at: Generated<Timestamp>;
+    slot_minutes: Generated<number>;
+    recording_enabled: Generated<boolean>;
 };
 export type email_campaign_recipients = {
     id: string;
@@ -4536,6 +4611,7 @@ export type quiz_questions = {
     created_at: Timestamp;
     updated_at: Timestamp;
     question_type: Generated<quiz_question_type>;
+    source_question_id: string | null;
 };
 export type quizzes = {
     id: string;
@@ -4562,6 +4638,8 @@ export type quizzes = {
     proctor_camera: Generated<boolean>;
     proctor_max_tab_switches: number | null;
     proctoring_enabled: Generated<boolean>;
+    bank_selection: unknown | null;
+    question_bank_id: string | null;
 };
 export type refunds = {
     id: string;
@@ -5634,6 +5712,10 @@ export type tenants = {
     access_managed_enabled_by_user_id: string | null;
     certificate_tab_enabled: Generated<boolean>;
     jobs_org_only_enabled: Generated<boolean>;
+    video_provider: tenant_video_provider | null;
+    enrolled_courses_only_enabled: Generated<boolean>;
+    enrolled_courses_only_enabled_at: Timestamp | null;
+    enrolled_courses_only_enabled_by_user_id: string | null;
 };
 export type test_attempt_answers = {
     id: string;
@@ -5719,6 +5801,7 @@ export type test_certificates = {
     revoked_at: Timestamp | null;
     created_at: Timestamp;
     updated_at: Timestamp;
+    template_snapshot: unknown | null;
 };
 export type test_coupons = {
     id: string;
@@ -6351,8 +6434,6 @@ export type videos = {
     watermark: Generated<watermark_mode>;
     allow_offline: Generated<boolean>;
     captions_langs: Generated<string[]>;
-    captions_status: Generated<video_artifact_status>;
-    mp4_status: Generated<video_artifact_status>;
     locked_by: string | null;
     locked_at: Timestamp | null;
     heartbeat_at: Timestamp | null;
@@ -6363,6 +6444,8 @@ export type videos = {
     created_at: Generated<Timestamp>;
     updated_at: Generated<Timestamp>;
     ready_at: Timestamp | null;
+    captions_status: Generated<video_artifact_status>;
+    mp4_status: Generated<video_artifact_status>;
 };
 export type wa_audit_log = {
     id: string;
@@ -6792,6 +6875,7 @@ export type DB = {
     ceo_agent_market_pulse: ceo_agent_market_pulse;
     ceo_agent_tenant_onboarding: ceo_agent_tenant_onboarding;
     certificate_batches: certificate_batches;
+    certificate_templates: certificate_templates;
     certificates: certificates;
     code_judge_audit_logs: code_judge_audit_logs;
     code_language_configs: code_language_configs;
@@ -6872,6 +6956,10 @@ export type DB = {
     crm_whatsapp_config: crm_whatsapp_config;
     crm_whatsapp_conversations: crm_whatsapp_conversations;
     crm_whatsapp_messages: crm_whatsapp_messages;
+    demo_bookings: demo_bookings;
+    demo_host_availability: demo_host_availability;
+    demo_host_blocked_slots: demo_host_blocked_slots;
+    demo_host_calendar_connections: demo_host_calendar_connections;
     email_campaign_recipients: email_campaign_recipients;
     email_campaigns: email_campaigns;
     enrollments: enrollments;
