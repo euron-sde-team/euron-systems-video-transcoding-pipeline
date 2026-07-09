@@ -27,7 +27,8 @@ export const generateCaptions = async (
   inputPath: string,
   workDir: string,
   hasAudio: boolean,
-  lang: string = config.CAPTIONS_DEFAULT_LANG
+  lang: string = config.CAPTIONS_DEFAULT_LANG,
+  signal?: AbortSignal
 ): Promise<CaptionsResult | null> => {
   if (!hasAudio) return null;
 
@@ -41,13 +42,15 @@ export const generateCaptions = async (
     await run(
       config.FFMPEG_BIN,
       ["-y", "-i", inputPath, "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wavPath],
-      "ffmpeg-wav"
+      "ffmpeg-wav",
+      { signal }
     );
     // 2. transcribe → <lang>.vtt. `-l <lang>` forces the language (default English).
     await run(
       config.WHISPER_BIN,
       ["-m", config.WHISPER_MODEL, "-l", lang, "-f", wavPath, "-ovtt", "-of", outPrefix],
-      "whisper"
+      "whisper",
+      { signal }
     );
     await access(vttFile);
     return { vttFile, lang };

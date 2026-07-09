@@ -50,7 +50,8 @@ export const encodeDownloadFromSource = async (
   workDir: string,
   scaleFilter: string,
   hasAudio: boolean,
-  durationSec = 0
+  durationSec = 0,
+  signal?: AbortSignal
 ): Promise<string> => {
   const outPath = path.join(workDir, "processed.mp4");
   const args = ["-y", "-i", inputPath, "-vf", scaleFilter, "-map", "0:v:0"];
@@ -60,7 +61,7 @@ export const encodeDownloadFromSource = async (
   if (durationSec > 0) args.push("-t", String(durationSec));
   args.push("-movflags", "+faststart", outPath);
 
-  await run(config.FFMPEG_BIN, args, "download-from-source");
+  await run(config.FFMPEG_BIN, args, "download-from-source", { signal });
   return outPath;
 };
 

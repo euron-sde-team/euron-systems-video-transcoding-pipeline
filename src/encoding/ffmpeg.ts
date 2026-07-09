@@ -28,7 +28,8 @@ export const transcode = async (
   rungs: Rung[],
   hasAudio: boolean,
   rotation = 0,
-  durationSec = 0
+  durationSec = 0,
+  signal?: AbortSignal
 ): Promise<TranscodeResult> => {
   // Clockwise display rotation, applied BEFORE the split so every rung inherits
   // it from the single decode. ffmpeg does NOT autorotate complex-filtergraph
@@ -99,6 +100,6 @@ export const transcode = async (
     );
   }
 
-  await run(config.FFMPEG_BIN, args, "ffmpeg-transcode");
+  await run(config.FFMPEG_BIN, args, "ffmpeg-transcode", { signal });
   return { videoFiles, audioFile };
 };

@@ -8,6 +8,7 @@ import {
   type VideoJobRow,
 } from "../../db/queue";
 import { generateCaptions } from "../../encoding/captions";
+import { OwnershipLostError } from "../../encoding/exec";
 import { buildMasterPlaylist, writeSubtitleRendition } from "../../encoding/hls-aes";
 import { selectLadder } from "../../encoding/ladder";
 import { probe } from "../../encoding/probe";
@@ -29,7 +30,7 @@ interface PipelineConfig {
  * gives master.m3u8 a 5-min TTL, a fresh playback session picks up captions with no
  * cache-busting. Throws on failure so the worker requeues just THIS job.
  */
-export const runCaptionsJob = async (job: VideoJobRow): Promise<void> => {
+export const runCaptionsJob = async (job: VideoJobRow, signal: AbortSignal): Promise<void> => {
   const video = await videosRepository.findById(job.video_id);
   if (!video) throw new Error(`captions job: video ${job.video_id} not found`);
   if (!video.source_key) throw new Error(`captions job: video ${job.video_id} has no source_key`);
@@ -48,7 +49,7 @@ export const runCaptionsJob = async (job: VideoJobRow): Promise<void> => {
     const inputPath = path.join(sourceDir, `original.${ext}`);
     await s3UploadService.downloadToFile(video.source_key, inputPath);
 
-    const probed = await probe(inputPath);
+    const probed = await probe(inputPath, signal);
     if (!probed.hasAudio) {
       logger.info(`[captions ${job.video_id}] source has no audio, marking skipped`);
       await markCaptionsSkipped(job.video_id);
@@ -57,7 +58,11 @@ export const runCaptionsJob = async (job: VideoJobRow): Promise<void> => {
 
     const cfg = (video.pipeline_config ?? {}) as PipelineConfig;
     const lang = cfg.captionsLang ?? config.CAPTIONS_DEFAULT_LANG;
-    const captions = await generateCaptions(inputPath, sourceDir, probed.hasAudio, lang);
+    const captions = await generateCaptions(inputPath, sourceDir, probed.hasAudio, lang, signal);
+    // generateCaptions swallows errors → null, so an abort mid-whisper surfaces
+    // here as null; distinguish it from a genuine whisper failure so we throw the
+    // right error (and never misreport a lost claim as "whisper failed").
+    if (signal.aborted) throw new OwnershipLostError("captions");
     if (!captions) {
       throw new Error("caption generation returned null (whisper failed or produced no vtt)");
     }
@@ -72,6 +77,11 @@ export const runCaptionsJob = async (job: VideoJobRow): Promise<void> => {
       captions.lang
     );
     await writeFile(path.join(capRoot, "master.m3u8"), master);
+
+    // Guard the R2 upload + status flip: never publish a subtitle master or mark
+    // captions ready for a video this worker no longer owns (markCaptionsReady is
+    // unguarded, so the abort check is the gate that protects it).
+    if (signal.aborted) throw new OwnershipLostError("captions");
 
     // Upload ONLY the hls-aes subtree (master.m3u8 + subs/*). Uploading jobDir would
     // also push the re-downloaded source + WAV under src/ to the public output bucket.

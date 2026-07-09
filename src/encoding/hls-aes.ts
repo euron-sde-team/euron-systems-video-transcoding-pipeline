@@ -25,6 +25,8 @@ export interface HlsAesInput {
   captions: { vttFile: string; lang: string } | null;
   /** Content duration (s); the subtitle media playlist needs an EXTINF. */
   durationSec: number;
+  /** Cancellation: kills the per-rung remux if the worker loses ownership. */
+  signal?: AbortSignal;
 }
 
 export interface HlsAesResult {
@@ -194,7 +196,7 @@ export const packageHlsAes = async (input: HlsAesInput): Promise<HlsAesResult> =
       path.join(rungDir, "index.m3u8")
     );
     // TS muxer auto-applies h264_mp4toannexb + AAC ADTS framing; no manual -bsf.
-    await run(config.FFMPEG_BIN, args, `hls-aes-${rung.name}`);
+    await run(config.FFMPEG_BIN, args, `hls-aes-${rung.name}`, { signal: input.signal });
   }
 
   // ── optional subtitle rendition (D4: captions on native Safari) ─────────────

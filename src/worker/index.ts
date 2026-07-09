@@ -66,11 +66,16 @@ const releaseAndExit = async (): Promise<void> => {
  *  the CAPTIONS/DOWNLOAD background jobs (video is playable the moment READY lands). */
 async function runVideo(video: VideoRow): Promise<void> {
   currentClaim = { type: "video", id: video.id };
-  const hb = new Heartbeat(video.id, WORKER_ID);
+  // Cooperative cancellation: when the heartbeat's guarded UPDATE hits 0 rows
+  // (the claim was stolen by the reaper or an operator "mark failed"), it fires
+  // onLost → ac.abort(), so runPrimary SIGKILLs any in-flight ffmpeg and bails
+  // instead of finishing a transcode for a video this worker no longer owns.
+  const ac = new AbortController();
+  const hb = new Heartbeat(video.id, WORKER_ID, () => ac.abort());
   hb.start();
   try {
     logger.info(`[worker] claimed video ${video.id} (attempt ${video.attempts}/${video.max_attempts})`);
-    const outcome = await runPrimary(video, WORKER_ID, hb);
+    const outcome = await runPrimary(video, WORKER_ID, hb, ac.signal);
     hb.stop();
     await markReadyAndEnqueue(
       video.id,
@@ -99,16 +104,25 @@ async function runVideo(video: VideoRow): Promise<void> {
  *  so a Spot claimback requeues ONLY this job, never the already-done sibling. */
 async function runBackgroundJob(job: VideoJobRow): Promise<void> {
   currentClaim = { type: "job", id: job.id };
+  // Same cancellation contract as the PRIMARY path: a 0-row heartbeat (claim
+  // stolen/reaped) aborts the job so we stop burning CPU on an artifact we no
+  // longer own. A transient DB error is caught and does NOT abort (would else
+  // kill a healthy encode on a blip); only a definitive not-owned result does.
+  const ac = new AbortController();
   const timer = setInterval(() => {
-    void jobHeartbeat(job.id, WORKER_ID).catch((e) => logger.warn(`[job-hb ${job.id}] ${e}`));
+    void jobHeartbeat(job.id, WORKER_ID)
+      .then((owned) => {
+        if (!owned) ac.abort();
+      })
+      .catch((e) => logger.warn(`[job-hb ${job.id}] ${e}`));
   }, config.HEARTBEAT_MS);
   try {
     logger.info(
       `[worker] claimed ${job.kind} job ${job.id} for video ${job.video_id} ` +
         `(attempt ${job.attempts}/${job.max_attempts})`
     );
-    if (job.kind === "CAPTIONS") await runCaptionsJob(job);
-    else await runDownloadJob(job);
+    if (job.kind === "CAPTIONS") await runCaptionsJob(job, ac.signal);
+    else await runDownloadJob(job, ac.signal);
     clearInterval(timer);
     await markJobDone(job.id, WORKER_ID);
     logger.info(`[worker] ${job.kind} job ${job.id} done`);

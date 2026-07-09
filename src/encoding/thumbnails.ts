@@ -38,7 +38,8 @@ export const generateThumbnails = async (
   workDir: string,
   srcWidth: number,
   srcHeight: number,
-  durationSec: number
+  durationSec: number,
+  signal?: AbortSignal
 ): Promise<ThumbnailsResult> => {
   const spriteDir = path.join(workDir, "thumbnails");
   await mkdir(spriteDir, { recursive: true });
@@ -50,7 +51,8 @@ export const generateThumbnails = async (
   await run(
     config.FFMPEG_BIN,
     ["-y", "-ss", String(posterAt), "-i", inputPath, "-frames:v", "1", "-q:v", "2", posterFile],
-    "ffmpeg-poster"
+    "ffmpeg-poster",
+    { signal }
   );
 
   const thumbH = even(Math.max(2, Math.round((THUMB_W * srcHeight) / srcWidth)));
@@ -70,7 +72,8 @@ export const generateThumbnails = async (
       "3",
       path.join(spriteDir, "sprite_%03d.jpg"),
     ],
-    "ffmpeg-sprite"
+    "ffmpeg-sprite",
+    { signal }
   );
 
   // thumbnails.vtt, each cue points at a tile region inside its sprite sheet.

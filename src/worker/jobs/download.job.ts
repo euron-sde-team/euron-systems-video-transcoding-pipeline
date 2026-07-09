@@ -3,6 +3,7 @@ import path from "path";
 import config from "../../config";
 import { markMp4Ready, setArtifactProcessing, type VideoJobRow } from "../../db/queue";
 import { encodeDownloadFromSource } from "../../encoding/download-mux";
+import { OwnershipLostError } from "../../encoding/exec";
 import { selectLadder } from "../../encoding/ladder";
 import { probe } from "../../encoding/probe";
 import videosRepository from "../../repositories/videos.repository";
@@ -18,7 +19,7 @@ import { uploadProcessedDownload } from "../r2";
  * the streaming rungs are on R2 as AES-TS, not on this worker. Throws on failure so
  * the worker requeues ONLY this job (an already-done CAPTIONS job is untouched).
  */
-export const runDownloadJob = async (job: VideoJobRow): Promise<void> => {
+export const runDownloadJob = async (job: VideoJobRow, signal: AbortSignal): Promise<void> => {
   const video = await videosRepository.findById(job.video_id);
   if (!video) throw new Error(`download job: video ${job.video_id} not found`);
   if (!video.source_key) throw new Error(`download job: video ${job.video_id} has no source_key`);
@@ -34,7 +35,7 @@ export const runDownloadJob = async (job: VideoJobRow): Promise<void> => {
     const inputPath = path.join(sourceDir, `original.${ext}`);
     await s3UploadService.downloadToFile(video.source_key, inputPath);
 
-    const probed = await probe(inputPath);
+    const probed = await probe(inputPath, signal);
     // Scale to the top rung's dimensions (same deterministic ladder PRIMARY used).
     const ladder = selectLadder(probed.orientation, probed.width, probed.height, probed.bitrateKbps);
     const top = ladder.reduce((best, cur) =>
@@ -46,8 +47,15 @@ export const runDownloadJob = async (job: VideoJobRow): Promise<void> => {
       jobDir,
       top.scaleFilter,
       probed.hasAudio,
-      probed.durationSec
+      probed.durationSec,
+      signal
     );
+
+    // Guard the private-bucket upload + status flip: if the claim was lost in the
+    // window after the encode finished, bail before publishing the MP4 or marking
+    // it ready (markMp4Ready is unguarded).
+    if (signal.aborted) throw new OwnershipLostError("download");
+
     await uploadProcessedDownload(processedDownloadKey(video.tenant_id, video.id), processed);
 
     await markMp4Ready(job.video_id);

@@ -2,6 +2,7 @@ import { mkdir, rm } from "fs/promises";
 import path from "path";
 import config from "../config";
 import { setOrientation, type VideoRow } from "../db/queue";
+import { OwnershipLostError } from "../encoding/exec";
 import { transcode } from "../encoding/ffmpeg";
 import { packageHlsAes } from "../encoding/hls-aes";
 import { selectLadder } from "../encoding/ladder";
@@ -45,7 +46,8 @@ interface PipelineConfig {
 export const runPrimary = async (
   video: VideoRow,
   workerId: string,
-  hb: Heartbeat
+  hb: Heartbeat,
+  signal: AbortSignal
 ): Promise<PrimaryOutcome> => {
   const jobDir = path.join(config.WORK_DIR, video.id);
   const sourceDir = path.join(jobDir, "src");
@@ -65,7 +67,7 @@ export const runPrimary = async (
     await s3UploadService.downloadToFile(video.source_key, inputPath);
 
     // ── 1. probe + orientation → ladder (capped to source bitrate) ──
-    const probed = await probe(inputPath);
+    const probed = await probe(inputPath, signal);
     await setOrientation(video.id, workerId, probed.orientation);
     const ladder = selectLadder(probed.orientation, probed.width, probed.height, probed.bitrateKbps);
     logger.info(
@@ -75,20 +77,28 @@ export const runPrimary = async (
     );
 
     // ── 2. transcoding (single decode, many encodes) + thumbnails ──
+    // hb.update() double-checks ownership (guarded UPDATE); if the claim was lost
+    // it flips the heartbeat's onLost → ac.abort(), so signal.aborted here means
+    // a genuine claim loss. The boundary throw bails out of the GAPS between
+    // encoder runs (each run() itself SIGKILLs its child on abort mid-encode).
     await hb.update("transcoding", 10);
+    if (signal.aborted) throw new OwnershipLostError("primary");
     const { videoFiles, audioFile } = await transcode(
       inputPath,
       renditionsDir,
       ladder,
       probed.hasAudio,
       probed.rotation,
-      probed.durationSec
+      probed.durationSec,
+      signal
     );
     await hb.update("transcoding", 60);
+    if (signal.aborted) throw new OwnershipLostError("primary");
 
     // Thumbnails/poster write straight into outputDir (shipped as-is to R2).
-    await generateThumbnails(inputPath, outputDir, probed.width, probed.height, probed.durationSec);
+    await generateThumbnails(inputPath, outputDir, probed.width, probed.height, probed.durationSec, signal);
     await hb.update("transcoding", 68);
+    if (signal.aborted) throw new OwnershipLostError("primary");
 
     // ── 3. packaging (generate + store key, then AES-128 HLS-TS, NO captions) ──
     // Captions are decoupled: the master here has NO subtitle rendition. The
@@ -104,8 +114,10 @@ export const runPrimary = async (
       workDir: renditionsDir,
       captions: null,
       durationSec: probed.durationSec,
+      signal,
     });
     await hb.update("packaging", 88);
+    if (signal.aborted) throw new OwnershipLostError("primary");
 
     // ── 4. uploading_output → R2 (video is playable once this completes) ──
     await hb.update("uploading_output", 92);

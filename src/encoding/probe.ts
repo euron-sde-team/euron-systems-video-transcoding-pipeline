@@ -78,7 +78,10 @@ const displayRotation = (stream: FfprobeStream): number => {
  * transcoder how to orient the output. Square is treated as landscape
  * downstream but recorded distinctly.
  */
-export const probe = async (inputPath: string): Promise<ProbeResult> => {
+export const probe = async (
+  inputPath: string,
+  signal?: AbortSignal
+): Promise<ProbeResult> => {
   const { stdout } = await run(
     config.FFPROBE_BIN,
     [
@@ -90,7 +93,8 @@ export const probe = async (inputPath: string): Promise<ProbeResult> => {
       "-show_format",
       inputPath,
     ],
-    "ffprobe"
+    "ffprobe",
+    { signal }
   );
 
   const parsed = JSON.parse(stdout) as FfprobeOutput;
