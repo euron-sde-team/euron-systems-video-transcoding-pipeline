@@ -9,7 +9,7 @@ import {
   REAP_SQL,
 } from "../db/queue-sql";
 import logger from "../utils/logger";
-import { countRunningWorkers, launchWorkers } from "./ec2";
+import { countRunningWorkers, jobsPool, launchWorkers, primaryPool } from "./ec2";
 
 export interface OrchestratorResult {
   reaped: number;
@@ -84,24 +84,61 @@ export const handler = async (): Promise<OrchestratorResult> => {
     const jobQueued = jobCountRes.rows[0]?.queued ?? 0;
     const jobInProgress = jobCountRes.rows[0]?.in_progress ?? 0;
 
+    // Scale-up math for ONE pool: provision off the queue and subtract only SPARE
+    // (running-not-busy) workers, capped at maxWorkers. `spare` clamps at 0 so an
+    // uncounted busy worker (still booting / role tag not yet visible) can't inflate
+    // the launch, and a busy worker can't suppress a needed launch (excluded from
+    // spare). DIVISOR=1 => one worker per queued item.
+    const plan = (q: number, inProg: number, running: number, maxW: number) => {
+      const spare = Math.max(0, running - inProg);
+      const need = Math.ceil(q / config.DIVISOR);
+      const toLaunch = Math.max(0, Math.min(need - spare, Math.max(0, maxW - running)));
+      return { spare, need, toLaunch };
+    };
+
+    if (config.JOBS_LAUNCH_TEMPLATE_NAME) {
+      // TWO pools: big primary instances drain uploaded VIDEOS; a separate small pool
+      // drains background video_jobs (captions/download). Each pool is counted by its
+      // own role tag and launched from its own ladder + LT, so a small jobs instance
+      // never picks up a heavy primary transcode and big instances aren't wasted on
+      // whisper. Workers self-select via WORKER_MODE (set in each LT's UserData).
+      const pRunning = await countRunningWorkers(config.WORKER_ROLE_TAG);
+      const p = plan(videoQueued, videoInProgress, pRunning, config.MAX_WORKERS);
+      const jRunning = await countRunningWorkers(config.JOBS_ROLE_TAG);
+      const j = plan(jobQueued, jobInProgress, jRunning, config.JOBS_MAX_WORKERS);
+      logger.info(
+        `[orchestrator] reaped=${reaped} primary[q=${videoQueued} proc=${videoInProgress} ` +
+          `run=${pRunning} launch=${p.toLaunch}] jobs[q=${jobQueued} proc=${jobInProgress} ` +
+          `run=${jRunning} launch=${j.toLaunch}]`
+      );
+      if (p.toLaunch > 0) await launchWorkers(p.toLaunch, primaryPool());
+      if (j.toLaunch > 0) await launchWorkers(j.toLaunch, jobsPool());
+      return {
+        reaped,
+        queued: videoQueued + jobQueued,
+        inProgress: videoInProgress + jobInProgress,
+        running: pRunning + jRunning,
+        spare: p.spare + j.spare,
+        toLaunch: p.toLaunch + j.toLaunch,
+      };
+    }
+
+    // SINGLE pool (no jobs pool configured): one fleet drains BOTH queues, workers
+    // run WORKER_MODE=all (video first, then jobs). The legacy behaviour, unchanged.
     const queued = videoQueued + jobQueued;
     const inProgress = videoInProgress + jobInProgress;
-
     const running = await countRunningWorkers();
-    const spare = Math.max(0, running - inProgress);
-    const need = Math.ceil(queued / config.DIVISOR);
-    const headroom = Math.max(0, config.MAX_WORKERS - running);
-    const toLaunch = Math.max(0, Math.min(need - spare, headroom));
+    const s = plan(queued, inProgress, running, config.MAX_WORKERS);
 
     logger.info(
       `[orchestrator] reaped=${reaped} queued=${queued}(v=${videoQueued},j=${jobQueued}) ` +
         `processing=${inProgress}(v=${videoInProgress},j=${jobInProgress}) ` +
-        `running=${running} spare=${spare} need=${need} toLaunch=${toLaunch}`
+        `running=${running} spare=${s.spare} need=${s.need} toLaunch=${s.toLaunch}`
     );
 
-    if (toLaunch > 0) await launchWorkers(toLaunch);
+    if (s.toLaunch > 0) await launchWorkers(s.toLaunch, primaryPool());
 
-    return { reaped, queued, inProgress, running, spare, toLaunch };
+    return { reaped, queued, inProgress, running, spare: s.spare, toLaunch: s.toLaunch };
   } finally {
     await db.end();
   }

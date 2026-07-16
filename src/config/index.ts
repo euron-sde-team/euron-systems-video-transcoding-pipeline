@@ -111,7 +111,31 @@ const config = {
   // (the 1-min cron keeps retrying). Set ONDEMAND_FALLBACK=true to opt back in.
   ONDEMAND_FALLBACK: (process.env.ONDEMAND_FALLBACK ?? "false") === "true",
 
+  // ─── Background-jobs pool (captions + MP4 download) ─────────────────────────
+  // A SEPARATE, smaller spot pool for decoupled background jobs: whisper (captions)
+  // uses ~4 threads and the MP4 download re-encode is async, so neither needs the
+  // big primary-transcode instances. When JOBS_LAUNCH_TEMPLATE_NAME is set the
+  // orchestrator scales this pool independently (its own role tag + instance ladder
+  // + LT) from the `video_jobs` backlog; leaving it EMPTY keeps the legacy single
+  // pool (primary workers drain jobs too). Instances run WORKER_MODE=jobs (set in
+  // the jobs LT's UserData) so they claim ONLY jobs, never a primary video.
+  JOBS_LAUNCH_TEMPLATE_NAME: process.env.JOBS_LAUNCH_TEMPLATE_NAME ?? "",
+  JOBS_INSTANCE_TYPES: parseList(
+    process.env.JOBS_INSTANCE_TYPES ?? "c7g.xlarge,c6g.xlarge,m7g.xlarge",
+    undefined
+  ),
+  JOBS_ROLE_TAG: process.env.JOBS_ROLE_TAG ?? "transcoder-jobs",
+  JOBS_MAX_WORKERS: Number(process.env.JOBS_MAX_WORKERS ?? "50"),
+
   // ─── Worker (EC2) ──────────────────────────────────────────────────────────
+  // Which queue(s) a worker services:
+  //   "all"     (DEFAULT) claim VIDEOS then background jobs -- the legacy single-pool
+  //             behaviour, so a deployment without a jobs pool keeps working unchanged.
+  //   "primary" claim uploaded VIDEOS only (the big primary-transcode pool).
+  //   "jobs"    claim background video_jobs (captions/download) only (the small pool).
+  // In a two-pool setup the primary LT sets "primary" and the jobs LT sets "jobs" so a
+  // small instance never picks up a heavy primary transcode and vice-versa.
+  WORKER_MODE: process.env.WORKER_MODE ?? "all",
   WORKER_ID: process.env.WORKER_ID ?? "",
   IDLE_GRACE_MS: Number(process.env.IDLE_GRACE_MS ?? "120000"),
   POLL_MS: Number(process.env.POLL_MS ?? "5000"),

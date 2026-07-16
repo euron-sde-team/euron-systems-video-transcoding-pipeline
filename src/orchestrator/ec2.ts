@@ -19,11 +19,13 @@ const ec2 = new EC2Client({ region: config.AWS_REGION });
  * every minute while the first batch is still booting. A self-reported DB table
  * would go stale the instant a Spot instance is reclaimed.
  */
-export const countRunningWorkers = async (): Promise<number> => {
+export const countRunningWorkers = async (
+  roleTag: string = config.WORKER_ROLE_TAG
+): Promise<number> => {
   const res = await ec2.send(
     new DescribeInstancesCommand({
       Filters: [
-        { Name: "tag:role", Values: [config.WORKER_ROLE_TAG] },
+        { Name: "tag:role", Values: [roleTag] },
         { Name: "instance-state-name", Values: ["pending", "running"] },
       ],
     })
@@ -69,7 +71,8 @@ const buildOverrides = (instanceTypes: string[]): FleetLaunchTemplateOverridesRe
 const fleetInput = (
   count: number,
   useSpot: boolean,
-  instanceTypes: string[]
+  instanceTypes: string[],
+  ltName: string
 ): CreateFleetCommandInput => ({
   Type: "instant",
   TargetCapacitySpecification: {
@@ -90,7 +93,7 @@ const fleetInput = (
   LaunchTemplateConfigs: [
     {
       LaunchTemplateSpecification: {
-        LaunchTemplateName: config.LAUNCH_TEMPLATE_NAME,
+        LaunchTemplateName: ltName,
         Version: config.LAUNCH_TEMPLATE_VERSION,
       },
       Overrides: buildOverrides(instanceTypes),
@@ -111,10 +114,11 @@ const createFleet = async (
   count: number,
   useSpot: boolean,
   instanceTypes: string[],
-  label: string
+  label: string,
+  ltName: string
 ): Promise<string[]> => {
   try {
-    const res = await ec2.send(new CreateFleetCommand(fleetInput(count, useSpot, instanceTypes)));
+    const res = await ec2.send(new CreateFleetCommand(fleetInput(count, useSpot, instanceTypes, ltName)));
     const ids = (res.Instances ?? []).flatMap((i) => i.InstanceIds ?? []);
     for (const e of res.Errors ?? []) {
       logger.warn(
@@ -148,15 +152,38 @@ const createFleet = async (
  * restarts forever on repeated Spot loss. Instances are tagged here so the per-env
  * `role` tag is authoritative for countRunningWorkers even if a launch template
  * omits it.
+ *
+ * `pool` identifies which fleet to launch: the primary transcode pool (big ladder,
+ * default) or the smaller background-jobs pool. Each pool has its own instance
+ * ladder, `role` tag, and launch template (the jobs LT sets WORKER_MODE=jobs).
  */
-export const launchWorkers = async (n: number): Promise<string[]> => {
+export interface WorkerPool {
+  instanceTypes: string[];
+  roleTag: string;
+  launchTemplateName: string;
+}
+
+export const primaryPool = (): WorkerPool => ({
+  instanceTypes: config.WORKER_INSTANCE_TYPES,
+  roleTag: config.WORKER_ROLE_TAG,
+  launchTemplateName: config.LAUNCH_TEMPLATE_NAME,
+});
+
+export const jobsPool = (): WorkerPool => ({
+  instanceTypes: config.JOBS_INSTANCE_TYPES,
+  roleTag: config.JOBS_ROLE_TAG,
+  launchTemplateName: config.JOBS_LAUNCH_TEMPLATE_NAME,
+});
+
+export const launchWorkers = async (n: number, pool: WorkerPool): Promise<string[]> => {
   const ids: string[] = [];
+  const { instanceTypes, roleTag, launchTemplateName: lt } = pool;
 
   // Strict ladder: exhaust each type (all AZs) before the next, in list order.
-  for (const type of config.WORKER_INSTANCE_TYPES) {
+  for (const type of instanceTypes) {
     if (ids.length >= n) break;
     const shortfall = n - ids.length;
-    const launched = await createFleet(shortfall, true, [type], `spot:${type}`);
+    const launched = await createFleet(shortfall, true, [type], `spot:${roleTag}:${type}`, lt);
     if (launched.length < shortfall) {
       logger.warn(
         `[orchestrator] ${type} gave ${launched.length}/${shortfall} (short in all AZs); ` +
@@ -170,17 +197,17 @@ export const launchWorkers = async (n: number): Promise<string[]> => {
   if (ids.length < n && config.ONDEMAND_FALLBACK) {
     const shortfall = n - ids.length;
     logger.warn(`[orchestrator] Spot gave ${ids.length}/${n}; On-Demand fallback for ${shortfall}`);
-    ids.push(...(await createFleet(shortfall, false, config.WORKER_INSTANCE_TYPES, "on-demand")));
+    ids.push(...(await createFleet(shortfall, false, instanceTypes, `on-demand:${roleTag}`, lt)));
   }
 
   if (ids.length > 0) {
     await ec2.send(
       new CreateTagsCommand({
         Resources: ids,
-        Tags: [{ Key: "role", Value: config.WORKER_ROLE_TAG }],
+        Tags: [{ Key: "role", Value: roleTag }],
       })
     );
   }
-  logger.info(`[orchestrator] launched ${ids.length}/${n} worker(s): ${ids.join(", ")}`);
+  logger.info(`[orchestrator] launched ${ids.length}/${n} ${roleTag} worker(s): ${ids.join(", ")}`);
   return ids;
 };

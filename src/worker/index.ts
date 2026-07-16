@@ -202,27 +202,39 @@ async function run(): Promise<void> {
 
   let idleSince: number | null = null;
 
+  // Pool role: "primary" claims videos only, "jobs" claims background jobs only,
+  // "all" (default, single-pool) claims both. So a small jobs-pool instance never
+  // picks up a heavy primary transcode, and big primary instances aren't wasted on
+  // whisper. See config.WORKER_MODE.
+  const claimsVideos = config.WORKER_MODE !== "jobs";
+  const claimsJobs = config.WORKER_MODE !== "primary";
+  logger.info(`[worker] mode=${config.WORKER_MODE} videos=${claimsVideos} jobs=${claimsJobs}`);
+
   while (!shuttingDown) {
     // PRIMARY (playback path) has strict priority: only claim a background job when
     // no video is waiting, so time-to-watchable is never delayed by captions/MP4.
-    const video = await claimNext(WORKER_ID).catch((e) => {
-      logger.error(`[worker] claim failed: ${e}`);
-      return null;
-    });
-    if (video) {
-      idleSince = null;
-      await runVideo(video);
-      continue;
+    if (claimsVideos) {
+      const video = await claimNext(WORKER_ID).catch((e) => {
+        logger.error(`[worker] claim failed: ${e}`);
+        return null;
+      });
+      if (video) {
+        idleSince = null;
+        await runVideo(video);
+        continue;
+      }
     }
 
-    const job = await claimNextJob(WORKER_ID).catch((e) => {
-      logger.error(`[worker] job claim failed: ${e}`);
-      return null;
-    });
-    if (job) {
-      idleSince = null;
-      await runBackgroundJob(job);
-      continue;
+    if (claimsJobs) {
+      const job = await claimNextJob(WORKER_ID).catch((e) => {
+        logger.error(`[worker] job claim failed: ${e}`);
+        return null;
+      });
+      if (job) {
+        idleSince = null;
+        await runBackgroundJob(job);
+        continue;
+      }
     }
 
     idleSince ??= Date.now();
