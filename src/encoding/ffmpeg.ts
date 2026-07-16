@@ -11,6 +11,22 @@ export interface TranscodeResult {
 }
 
 /**
+ * A source at/below this fps (or with an unusable rate) is "near-static": a slide
+ * deck / screen-hold at ~0.14 fps -- the case that breaks MSE with ~1 frame per
+ * segment. The floor is deliberately BELOW every real capture/broadcast rate
+ * (15 / 23.976 / 24 / 25 / 30 / 60) so NORMAL videos are never treated as static.
+ * Such sources need TWO special-cases, both keyed off this predicate:
+ *   1. force CFR to MIN_OUTPUT_FPS (a per-output `-r`; see transcode below), and
+ *   2. SKIP the source-bitrate cap (their video stream is ~2 kbps because there is
+ *      no motion; capping the CFR keyframes to that starves x264 into flat gray --
+ *      the caller passes bitrateKbps=0 to selectLadder for these). x264 still
+ *      undershoots on the static picture, so the full-ladder cap keeps files small.
+ */
+export const NEAR_STATIC_FPS = 10;
+export const isNearStatic = (sourceFps: number): boolean =>
+  sourceFps <= 0 || sourceFps < NEAR_STATIC_FPS;
+
+/**
  * ONE FFmpeg process: decode once, split, encode every rung + extract audio.
  *
  * Why a single process (constraint #3): spawning one ffmpeg per rung decodes the
@@ -66,8 +82,7 @@ export const transcode = async (
   // emit uninitialised gray (128) frames and stall the encode. `-r` duplicates
   // frames per output stream after the split, so the split only buffers the sparse
   // source frames.
-  const NEAR_STATIC_FPS = 10;
-  const forceCfr = sourceFps <= 0 || sourceFps < NEAR_STATIC_FPS;
+  const forceCfr = isNearStatic(sourceFps);
 
   // Build: [0:v]{rot,}split=N[s0][s1]...; [s0]scale..[v0]; [s1]scale..[v1]; ...
   const preSplit = rotFilter;

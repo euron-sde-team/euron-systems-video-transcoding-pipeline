@@ -3,7 +3,7 @@ import path from "path";
 import config from "../config";
 import { setOrientation, type VideoRow } from "../db/queue";
 import { OwnershipLostError } from "../encoding/exec";
-import { transcode } from "../encoding/ffmpeg";
+import { isNearStatic, transcode } from "../encoding/ffmpeg";
 import { packageHlsAes } from "../encoding/hls-aes";
 import { selectLadder } from "../encoding/ladder";
 import { probe } from "../encoding/probe";
@@ -67,9 +67,15 @@ export const runPrimary = async (
     await s3UploadService.downloadToFile(video.source_key, inputPath, signal);
 
     // ── 1. probe + orientation → ladder (capped to source bitrate) ──
+    // A near-static source reports a ~2 kbps VIDEO-stream bitrate (no motion), but
+    // we force it to CFR (24 fps) which needs real bits for the per-4s keyframes;
+    // capping to ~2 kbps starves x264 into flat gray. Pass bitrateKbps=0 for these
+    // so selectLadder's capToSource is a no-op and they get the full ladder bitrates
+    // (x264 still undershoots on the static picture, so the files stay small).
     const probed = await probe(inputPath, signal);
     await setOrientation(video.id, workerId, probed.orientation);
-    const ladder = selectLadder(probed.orientation, probed.width, probed.height, probed.bitrateKbps);
+    const capBitrate = isNearStatic(probed.fps) ? 0 : probed.bitrateKbps;
+    const ladder = selectLadder(probed.orientation, probed.width, probed.height, capBitrate);
     logger.info(
       `[pipeline ${video.id}] ${probed.width}x${probed.height} ${probed.orientation} ` +
         `rot=${probed.rotation}, ${ladder.length} rungs, ${probed.durationSec}s, ` +
