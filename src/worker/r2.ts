@@ -19,11 +19,58 @@ const r2 = new S3Client({
   region: "auto",
   endpoint: config.R2_ENDPOINT || undefined,
   forcePathStyle: true,
+  // A large output tree is thousands of PutObjects over the billed EC2->R2 egress hop.
+  // R2/Cloudflare can return a transient 5xx or throttle mid-upload; with the SDK
+  // default (3 attempts, no backoff) one such blip sinks the whole tree and the video
+  // restarts from zero. Adaptive retry adds a client-side rate limiter + backoff, and
+  // explicit timeouts turn a hung socket into a retryable error instead of a stall
+  // (requestTimeout is generous so a legit multi-GB download-MP4 PUT is never cut off).
+  // Per-file retry with a FRESH stream lives in withRetry() below, because the SDK
+  // cannot rewind a consumed read stream to replay a stream-body PUT.
+  maxAttempts: 5,
+  retryMode: "adaptive",
+  requestHandler: { connectionTimeout: 6_000, requestTimeout: 300_000 },
   credentials:
     config.R2_ACCESS_KEY_ID && config.R2_SECRET_ACCESS_KEY
       ? { accessKeyId: config.R2_ACCESS_KEY_ID, secretAccessKey: config.R2_SECRET_ACCESS_KEY }
       : undefined,
 });
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Retry an idempotent R2 PUT with exponential backoff + jitter. `fn` is invoked
+ * fresh on every attempt so the caller can re-create the read stream (a consumed
+ * stream cannot be replayed). A lost-claim abort (OwnershipLostError / aborted
+ * signal) is NEVER retried, it surfaces immediately so a reaped/cancelled video
+ * stops shipping bytes. This sits ON TOP of the client's adaptive retry: the SDK
+ * handles what it can replay, this covers the stream-body PUTs it cannot.
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  label: string,
+  signal?: AbortSignal,
+  attempts = 5,
+  baseMs = 500
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    if (signal?.aborted) throw new OwnershipLostError(label);
+    try {
+      return await fn();
+    } catch (err) {
+      if (err instanceof OwnershipLostError || signal?.aborted) throw err;
+      lastErr = err;
+      if (attempt === attempts) break;
+      const backoff = baseMs * 2 ** (attempt - 1) + Math.floor(Math.random() * 250);
+      logger.warn(
+        `[r2] ${label} attempt ${attempt}/${attempts} failed: ${(err as Error).message}; retry in ${backoff}ms`
+      );
+      await sleep(backoff);
+    }
+  }
+  throw lastErr;
+}
 
 const contentTypeFor = (file: string): string => {
   if (file.endsWith(".m3u8")) return "application/vnd.apple.mpegurl";
@@ -104,16 +151,21 @@ export const uploadOutputTree = async (
     const key = `${outputPrefix}/${rel}`;
     const size = (await stat(filePath)).size;
     bytes += size;
-    await r2.send(
-      new PutObjectCommand({
-        Bucket: config.R2_BUCKET,
-        Key: key,
-        Body: createReadStream(filePath),
-        ContentLength: size,
-        ContentType: contentTypeFor(filePath),
-        CacheControl: cacheControlFor(filePath),
-      }),
-      { abortSignal: signal }
+    await withRetry(
+      () =>
+        r2.send(
+          new PutObjectCommand({
+            Bucket: config.R2_BUCKET,
+            Key: key,
+            Body: createReadStream(filePath), // fresh stream per attempt (see withRetry)
+            ContentLength: size,
+            ContentType: contentTypeFor(filePath),
+            CacheControl: cacheControlFor(filePath),
+          }),
+          { abortSignal: signal }
+        ),
+      `put ${rel}`,
+      signal
     );
   });
 
@@ -133,15 +185,20 @@ export const uploadProcessedDownload = async (
   signal?: AbortSignal
 ): Promise<void> => {
   const size = (await stat(filePath)).size;
-  await r2.send(
-    new PutObjectCommand({
-      Bucket: R2_DOWNLOADS_BUCKET,
-      Key: key,
-      Body: createReadStream(filePath),
-      ContentLength: size,
-      ContentType: "video/mp4",
-    }),
-    { abortSignal: signal }
+  await withRetry(
+    () =>
+      r2.send(
+        new PutObjectCommand({
+          Bucket: R2_DOWNLOADS_BUCKET,
+          Key: key,
+          Body: createReadStream(filePath), // fresh stream per attempt (see withRetry)
+          ContentLength: size,
+          ContentType: "video/mp4",
+        }),
+        { abortSignal: signal }
+      ),
+    `put-download ${key}`,
+    signal
   );
   logger.info(`[r2] uploaded processed download (${size} bytes) → ${R2_DOWNLOADS_BUCKET}/${key}`);
 };
