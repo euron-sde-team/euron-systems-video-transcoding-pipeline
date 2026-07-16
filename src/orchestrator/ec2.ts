@@ -129,38 +129,41 @@ const createFleet = async (
 };
 
 /**
- * Launch up to N workers with a STRICT instance-type preference order. The first
- * entry of WORKER_INSTANCE_TYPES (c7g.xlarge) is the preferred type and is tried
- * ALONE first, across all AZs (capacity-optimized = deepest AZ Spot pool). Only the
- * capacity the preferred type could NOT supply this minute spills to the remaining
- * (fallback) types, again across all AZs. So a fallback type is used ONLY when the
- * preferred type is unavailable in every AZ -- never while c7g.xlarge has room.
+ * Launch up to N workers with a STRICT instance-type preference LADDER. Each type
+ * in WORKER_INSTANCE_TYPES order (e.g. c7g.4xlarge, c7g.2xlarge, c7g.xlarge, ...) is
+ * tried ALONE, across all AZs (capacity-optimized = deepest AZ Spot pool), for only
+ * the capacity the higher-preference types could NOT supply this minute. So
+ * c7g.2xlarge is used only once c7g.4xlarge is unavailable in every AZ, c7g.xlarge
+ * only once both are, and so on down the list -- never while a more-preferred size
+ * still has room.
  *
- * "Is c7g.xlarge available?" is answered by EC2 itself: tier 1 attempts it and
- * returns the instances EC2 launched; an empty tier-1 result (with ICE/
- * UnfulfillableCapacity in the logs) means c7g.xlarge is unavailable right now.
+ * "Is this type available?" is answered by EC2 itself: each per-type fleet attempt
+ * returns the instances EC2 actually launched; an empty result (with ICE/
+ * UnfulfillableCapacity in the logs) means that type is unavailable right now, so
+ * the shortfall spills to the next-preferred type.
  *
- * Spot-ONLY by policy: if neither the preferred nor fallback Spot pools have
- * capacity, we launch nothing and the backlog stays queued (the cron retries every
- * minute). ONDEMAND_FALLBACK (default off) can opt in to covering the remainder
- * On-Demand. Instances are tagged here so the per-env `role` tag is authoritative
- * for countRunningWorkers even if a launch template omits it.
+ * Spot-ONLY by policy: if no Spot pool for any type has capacity, we launch nothing
+ * and the backlog stays queued (the cron retries every minute). ONDEMAND_FALLBACK
+ * (default off) can opt in to covering the remainder On-Demand so a long job never
+ * restarts forever on repeated Spot loss. Instances are tagged here so the per-env
+ * `role` tag is authoritative for countRunningWorkers even if a launch template
+ * omits it.
  */
 export const launchWorkers = async (n: number): Promise<string[]> => {
-  const [preferred, ...fallbacks] = config.WORKER_INSTANCE_TYPES;
   const ids: string[] = [];
 
-  // Tier 1 -- preferred type only (e.g. c7g.xlarge), across all AZs.
-  if (preferred) ids.push(...(await createFleet(n, true, [preferred], `spot:${preferred}`)));
-
-  // Tier 2 -- fallback types, ONLY for capacity the preferred type couldn't give.
-  if (ids.length < n && fallbacks.length > 0) {
+  // Strict ladder: exhaust each type (all AZs) before the next, in list order.
+  for (const type of config.WORKER_INSTANCE_TYPES) {
+    if (ids.length >= n) break;
     const shortfall = n - ids.length;
-    logger.warn(
-      `[orchestrator] ${preferred} gave ${ids.length}/${n} (unavailable in all AZs); ` +
-        `falling back to ${fallbacks.join(",")} for ${shortfall}`
-    );
-    ids.push(...(await createFleet(shortfall, true, fallbacks, "spot:fallback")));
+    const launched = await createFleet(shortfall, true, [type], `spot:${type}`);
+    if (launched.length < shortfall) {
+      logger.warn(
+        `[orchestrator] ${type} gave ${launched.length}/${shortfall} (short in all AZs); ` +
+          "spilling the remainder to the next-preferred type"
+      );
+    }
+    ids.push(...launched);
   }
 
   // On-Demand -- OFF by default (Spot-only policy); covers any remaining shortfall.

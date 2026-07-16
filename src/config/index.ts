@@ -94,12 +94,14 @@ const config = {
   // fleet. Plural lists fall back to the legacy single WORKER_SUBNET_ID /
   // WORKER_INSTANCE_TYPE when unset, so older deployments keep working.
   WORKER_SUBNET_IDS: parseList(process.env.WORKER_SUBNET_IDS, process.env.WORKER_SUBNET_ID),
-  // PRIORITY-ORDERED: the FIRST type is strictly preferred (tried alone across all
-  // AZs first); the rest are fallbacks used only for capacity the preferred type
-  // couldn't supply this minute. See launchWorkers in orchestrator/ec2.ts.
+  // STRICT LADDER (highest preference first): each type is exhausted across all AZs
+  // before the next is tried, so bigger/faster Graviton sizes are used when
+  // available and smaller ones only cover the shortfall. All entries MUST be arm64
+  // to match the worker AMI. See launchWorkers in orchestrator/ec2.ts.
   WORKER_INSTANCE_TYPES: parseList(
     process.env.WORKER_INSTANCE_TYPES,
-    process.env.WORKER_INSTANCE_TYPE ?? "c7g.xlarge"
+    process.env.WORKER_INSTANCE_TYPE ??
+      "c7g.4xlarge,c7g.2xlarge,c7g.xlarge,c6g.xlarge,m7g.xlarge"
   ),
   // Spot pool selection. "capacity-optimized" picks the deepest pool (fewest
   // interruptions); EC2 Fleet also accepts "price-capacity-optimized" etc.
