@@ -55,17 +55,22 @@ export const transcode = async (
           ? "transpose=1,transpose=1"
           : null;
 
-  // Force a constant frame rate ONLY when the source rate is unknown or below the
-  // floor (near-static / VFR); a normal source keeps its own rate and the command
-  // stays byte-for-byte legacy. Applied before the split so every rung shares the
-  // identical CFR timeline (and the 4s -force_key_frames land on real frames).
-  const cfrFilter =
-    sourceFps <= 0 || sourceFps < config.MIN_OUTPUT_FPS
-      ? `fps=${config.MIN_OUTPUT_FPS}`
-      : null;
-  const preSplit = [rotFilter, cfrFilter].filter(Boolean).join(",");
+  // Trigger CFR normalisation ONLY for a near-static / unusable-fps source (a slide
+  // deck at ~0.14 fps -- the case that breaks MSE with ~1 frame per segment). The
+  // trigger floor is deliberately BELOW every real capture/broadcast rate (15 /
+  // 23.976 / 24 / 25 / 30 / 60), so a NORMAL video is NEVER resampled and keeps the
+  // byte-for-byte legacy command; only genuinely near-static sources are lifted to
+  // MIN_OUTPUT_FPS. CFR is enforced with a per-output `-r` (see the encode args
+  // below), NOT an `fps` filter before the split: a pre-split `fps` feeding split's
+  // two consumers (720 + 480) at different drain rates on a VFR source made ffmpeg
+  // emit uninitialised gray (128) frames and stall the encode. `-r` duplicates
+  // frames per output stream after the split, so the split only buffers the sparse
+  // source frames.
+  const NEAR_STATIC_FPS = 10;
+  const forceCfr = sourceFps <= 0 || sourceFps < NEAR_STATIC_FPS;
 
-  // Build: [0:v]{rot,}{fps,}split=N[s0][s1]...; [s0]scale..[v0]; [s1]scale..[v1]; ...
+  // Build: [0:v]{rot,}split=N[s0][s1]...; [s0]scale..[v0]; [s1]scale..[v1]; ...
+  const preSplit = rotFilter;
   const splitLabels = rungs.map((_, i) => `[s${i}]`).join("");
   const splitChain = `[0:v]${preSplit ? `${preSplit},` : ""}split=${rungs.length}${splitLabels}`;
   const scaleChains = rungs.map((r, i) => `[s${i}]${r.scaleFilter}[v${i}]`);
@@ -89,6 +94,10 @@ export const transcode = async (
     videoFiles.push({ rung, file });
     args.push(
       "-map", `[v${i}]`,
+      // Per-output CFR: duplicate frames to MIN_OUTPUT_FPS for a near-static/VFR
+      // source (avoids the pre-split fps-filter gray bug; see above). Omitted for
+      // normal sources so their rate + command stay byte-for-byte legacy.
+      ...(forceCfr ? ["-r", String(config.MIN_OUTPUT_FPS)] : []),
       "-c:v", "libx264",
       "-b:v", `${rung.videoKbps}k`,
       "-maxrate", `${rung.maxrateKbps}k`,
