@@ -23,6 +23,14 @@ export interface ProbeResult {
    * by selectLadder to cap rung bitrates to the source (CAP_TO_SOURCE).
    */
   bitrateKbps: number;
+  /**
+   * Effective source frame rate in fps, from avg_frame_rate (falls back to
+   * r_frame_rate). 0 when ffprobe reports neither (e.g. avg_frame_rate="0/0" on a
+   * near-static source). The transcoder forces CFR at MIN_OUTPUT_FPS when this is
+   * 0 or below the floor, so a slideshow source cannot ship ~1 frame/segment (which
+   * breaks hls.js/MSE playback). See encoding/ffmpeg.ts.
+   */
+  fps: number;
 }
 
 interface FfprobeSideData {
@@ -34,6 +42,8 @@ interface FfprobeStream {
   width?: number;
   height?: number;
   bit_rate?: string;
+  avg_frame_rate?: string;
+  r_frame_rate?: string;
   tags?: { rotate?: string };
   side_data_list?: FfprobeSideData[];
 }
@@ -45,6 +55,23 @@ interface FfprobeOutput {
 const classify = (w: number, h: number): Orientation => {
   if (w === h) return "square";
   return w > h ? "landscape" : "portrait";
+};
+
+/**
+ * Parse an ffprobe frame-rate rational ("num/den", e.g. "30000/1001") into fps.
+ * Returns 0 for the degenerate cases ffprobe emits on VFR / near-static sources
+ * ("0/0", a zero denominator, or a non-numeric value) so callers can treat "no
+ * usable frame rate" and "genuinely low frame rate" uniformly.
+ */
+const parseFrameRate = (value?: string): number => {
+  if (!value) return 0;
+  const [numStr, denStr] = value.split("/");
+  const num = Number(numStr);
+  const den = denStr === undefined ? 1 : Number(denStr);
+  if (!Number.isFinite(num) || !Number.isFinite(den) || den === 0 || num <= 0) {
+    return 0;
+  }
+  return num / den;
 };
 
 /**
@@ -122,6 +149,11 @@ export const probe = async (
   const bitrateBps = videoBps > 0 ? videoBps : formatBps;
   const bitrateKbps = bitrateBps > 0 ? Math.round(bitrateBps / 1000) : 0;
 
+  // avg_frame_rate is the true average (0/0 on VFR/near-static); r_frame_rate is
+  // the base rate ffmpeg falls back on. Prefer the average, then the base.
+  const fps =
+    parseFrameRate(video.avg_frame_rate) || parseFrameRate(video.r_frame_rate);
+
   return {
     width,
     height,
@@ -130,5 +162,6 @@ export const probe = async (
     hasAudio,
     rotation,
     bitrateKbps,
+    fps,
   };
 };

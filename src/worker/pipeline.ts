@@ -73,7 +73,7 @@ export const runPrimary = async (
     logger.info(
       `[pipeline ${video.id}] ${probed.width}x${probed.height} ${probed.orientation} ` +
         `rot=${probed.rotation}, ${ladder.length} rungs, ${probed.durationSec}s, ` +
-        `audio=${probed.hasAudio}, src=${probed.bitrateKbps}kbps`
+        `audio=${probed.hasAudio}, src=${probed.bitrateKbps}kbps, fps=${probed.fps}`
     );
 
     // ── 2. transcoding (single decode, many encodes) + thumbnails ──
@@ -90,6 +90,7 @@ export const runPrimary = async (
       probed.hasAudio,
       probed.rotation,
       probed.durationSec,
+      probed.fps,
       signal
     );
     await hb.update("transcoding", 60);

@@ -149,6 +149,16 @@ const config = {
   // when ffprobe cannot report a source bitrate.
   CAP_TO_SOURCE: (process.env.CAP_TO_SOURCE || "true") === "true",
   CAP_TO_SOURCE_FACTOR: Number(process.env.CAP_TO_SOURCE_FACTOR) || 1.1,
+  // Minimum CONSTANT output frame rate. A near-static / variable-frame-rate source
+  // (e.g. a slide deck with voiceover) can carry an effective rate well under 1 fps,
+  // which ffmpeg passes straight through: the HLS output then holds ~1 video frame
+  // per segment with avg_frame_rate=0/0. hls.js/MSE cannot build a coherent video
+  // buffer from that (the audio buffer fills the segment while the video buffer
+  // barely advances) and fails with a fatal MEDIA_ERROR ("Playback failed"). When a
+  // source's frame rate is unknown or below this floor, the transcode forces CFR at
+  // this rate so static frames are duplicated into a playable timeline. Sources at
+  // or above the floor are left untouched (identical to the legacy command).
+  MIN_OUTPUT_FPS: Number(process.env.MIN_OUTPUT_FPS) || 24,
   // NOT IN USE (HLS-only migration): Shaka Packager (cbcs CMAF + DASH) is no longer
   // invoked; retained so a future DASH/DRM path can re-enable it.
   SHAKA_PACKAGER_BIN: process.env.SHAKA_PACKAGER_BIN ?? "packager",

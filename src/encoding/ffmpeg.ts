@@ -21,6 +21,14 @@ export interface TranscodeResult {
  * SAME timestamps (every 4s, frame-rate independent). Without aligned keyframes
  * ABR switching tears and the packager can't cut clean, switchable segments.
  * `-g`/`-keyint_min` are frame-count based and drift across rungs, do not use.
+ *
+ * Why the fps floor (sourceFps): a near-static / VFR source (slide deck + voiceover)
+ * carries an effective rate well under 1 fps. Passed through, the HLS output holds
+ * ~1 video frame per segment with avg_frame_rate=0/0, which hls.js/MSE cannot play
+ * (fatal MEDIA_ERROR -> "Playback failed"). When sourceFps is unknown (0) or below
+ * MIN_OUTPUT_FPS we inject one `fps` filter BEFORE the split so every rung inherits
+ * an identical constant-rate timeline (duplicated static frames). Sources at/above
+ * the floor get no fps filter, so their command stays byte-for-byte legacy.
  */
 export const transcode = async (
   inputPath: string,
@@ -29,6 +37,7 @@ export const transcode = async (
   hasAudio: boolean,
   rotation = 0,
   durationSec = 0,
+  sourceFps = 0,
   signal?: AbortSignal
 ): Promise<TranscodeResult> => {
   // Clockwise display rotation, applied BEFORE the split so every rung inherits
@@ -46,9 +55,19 @@ export const transcode = async (
           ? "transpose=1,transpose=1"
           : null;
 
-  // Build: [0:v]{rot,}split=N[s0][s1]...; [s0]scale..[v0]; [s1]scale..[v1]; ...
+  // Force a constant frame rate ONLY when the source rate is unknown or below the
+  // floor (near-static / VFR); a normal source keeps its own rate and the command
+  // stays byte-for-byte legacy. Applied before the split so every rung shares the
+  // identical CFR timeline (and the 4s -force_key_frames land on real frames).
+  const cfrFilter =
+    sourceFps <= 0 || sourceFps < config.MIN_OUTPUT_FPS
+      ? `fps=${config.MIN_OUTPUT_FPS}`
+      : null;
+  const preSplit = [rotFilter, cfrFilter].filter(Boolean).join(",");
+
+  // Build: [0:v]{rot,}{fps,}split=N[s0][s1]...; [s0]scale..[v0]; [s1]scale..[v1]; ...
   const splitLabels = rungs.map((_, i) => `[s${i}]`).join("");
-  const splitChain = `[0:v]${rotFilter ? `${rotFilter},` : ""}split=${rungs.length}${splitLabels}`;
+  const splitChain = `[0:v]${preSplit ? `${preSplit},` : ""}split=${rungs.length}${splitLabels}`;
   const scaleChains = rungs.map((r, i) => `[s${i}]${r.scaleFilter}[v${i}]`);
   const filterComplex = [splitChain, ...scaleChains].join(";");
 
