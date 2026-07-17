@@ -61,6 +61,10 @@ mkdir -p "$APP_DIR"
   echo "WHISPER_MODEL=/opt/models/ggml-small.bin"
   echo "WORK_DIR=/mnt/work"
   echo "PG_POOL_MAX=4"
+  # Pool role: this (primary) LT claims videos only. The jobs LT's UserData overrides
+  # this single line to WORKER_MODE=jobs (captions + download). A single-pool deploy
+  # can omit it entirely (config defaults to "all").
+  echo "WORKER_MODE=primary"
 } >> "$ENV_FILE"
 
 write_param "DATABASE_URL"          "DATABASE_URL"
